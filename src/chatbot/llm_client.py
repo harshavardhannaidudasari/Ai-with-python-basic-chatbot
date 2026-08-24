@@ -9,12 +9,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import anthropic
+import ollama
 
 from .config import settings
 
 
 class LLMError(RuntimeError):
-    """Raised when the Claude API call fails or is misconfigured."""
+    """Raised when the LLM API call fails or is misconfigured."""
 
 
 _NO_EFFORT_MODELS = ("haiku", "sonnet-4-5", "sonnet-4-0")
@@ -23,6 +24,20 @@ _NO_EFFORT_MODELS = ("haiku", "sonnet-4-5", "sonnet-4-0")
 def _supports_effort(model: str) -> bool:
     # `output_config.effort` errors on Haiku and Sonnet-4.5-and-older tiers.
     return not any(marker in model for marker in _NO_EFFORT_MODELS)
+
+
+def _build_system_prompt(context_chunks: list[str] | None) -> str:
+    if not context_chunks:
+        return settings.system_prompt
+
+    context_block = "\n\n---\n\n".join(context_chunks)
+    return (
+        f"{settings.system_prompt}\n\n"
+        "Use the following retrieved context to answer the user's question "
+        "when it is relevant. If the context does not contain the answer, "
+        "say so and answer from your general knowledge instead.\n\n"
+        f"<context>\n{context_block}\n</context>"
+    )
 
 
 class ClaudeClient:
@@ -48,17 +63,7 @@ class ClaudeClient:
         return kwargs
 
     def build_system_prompt(self, context_chunks: list[str] | None) -> str:
-        if not context_chunks:
-            return settings.system_prompt
-
-        context_block = "\n\n---\n\n".join(context_chunks)
-        return (
-            f"{settings.system_prompt}\n\n"
-            "Use the following retrieved context to answer the user's question "
-            "when it is relevant. If the context does not contain the answer, "
-            "say so and answer from your general knowledge instead.\n\n"
-            f"<context>\n{context_block}\n</context>"
-        )
+        return _build_system_prompt(context_chunks)
 
     def stream_reply(
         self, messages: list[dict], context_chunks: list[str] | None = None
@@ -97,3 +102,78 @@ class ClaudeClient:
         if final.stop_reason == "refusal":
             return "I'm not able to help with that request."
         return "".join(block.text for block in final.content if block.type == "text")
+
+
+class OllamaClient:
+    """Wraps a local Ollama server (https://ollama.com) with the same interface as `ClaudeClient`."""
+
+    def __init__(self) -> None:
+        self.client = ollama.Client(host=settings.ollama_host)
+
+    def build_system_prompt(self, context_chunks: list[str] | None) -> str:
+        return _build_system_prompt(context_chunks)
+
+    def _chat_messages(self, system: str, messages: list[dict]) -> list[dict]:
+        return [{"role": "system", "content": system}, *messages]
+
+    def stream_reply(
+        self, messages: list[dict], context_chunks: list[str] | None = None
+    ) -> Iterator[str]:
+        """Yield text chunks as they arrive from the model."""
+        system = self.build_system_prompt(context_chunks)
+        try:
+            for part in self.client.chat(
+                model=settings.ollama_model,
+                messages=self._chat_messages(system, messages),
+                stream=True,
+            ):
+                yield part["message"]["content"]
+        except Exception as exc:
+            raise LLMError(
+                f"Could not get a response from Ollama ({settings.ollama_host}): {exc}"
+            ) from exc
+
+    def reply(self, messages: list[dict], context_chunks: list[str] | None = None) -> str:
+        """Return the full response text in one call (used by the web API)."""
+        system = self.build_system_prompt(context_chunks)
+        try:
+            response = self.client.chat(
+                model=settings.ollama_model,
+                messages=self._chat_messages(system, messages),
+                stream=False,
+            )
+        except Exception as exc:
+            raise LLMError(
+                f"Could not get a response from Ollama ({settings.ollama_host}): {exc}"
+            ) from exc
+        return response["message"]["content"]
+
+    def stream_reply_with_image(self, prompt: str, image_b64: str) -> Iterator[str]:
+        """Yield text chunks describing/answering about a single attached image.
+
+        Single-turn only (no conversation history, no RAG context) — kept
+        simple since vision models are used for one-off image questions.
+        """
+        message = {"role": "user", "content": prompt or "Describe this image.", "images": [image_b64]}
+        try:
+            for part in self.client.chat(
+                model=settings.ollama_vision_model,
+                messages=[message],
+                stream=True,
+            ):
+                yield part["message"]["content"]
+        except Exception as exc:
+            raise LLMError(
+                f"Could not get a response from Ollama vision model "
+                f"'{settings.ollama_vision_model}' ({settings.ollama_host}): {exc}"
+            ) from exc
+
+
+def build_llm_client() -> ClaudeClient | OllamaClient:
+    """Return the configured LLM client (`LLM_PROVIDER=claude|ollama`, default `claude`)."""
+    provider = settings.llm_provider.strip().lower()
+    if provider == "ollama":
+        return OllamaClient()
+    if provider == "claude":
+        return ClaudeClient()
+    raise LLMError(f"Unknown LLM_PROVIDER: {settings.llm_provider!r} (expected 'claude' or 'ollama')")

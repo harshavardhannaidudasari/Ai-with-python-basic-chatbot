@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sign in — OrbitPro</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}" />
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='images/favicon-180.png') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="login-page">
+    <div>
+      <img class="login-logo" src="{{ url_for('static', filename='images/orbitpro-logo-trimmed.png') }}" alt="OrbitPro — Intelligence in Motion" />
+
+      <form class="login-card" method="post" action="{{ url_for('login') }}">
+        <h1>Sign in</h1>
+        <p class="subtitle">Intelligence in Motion</p>
+
+        {% if error %}
+          <div class="login-error">{{ error }}</div>
+        {% endif %}
+
+        <label class="login-label" for="username">Username</label>
+        <input class="login-input" id="username" name="username" type="text" autocomplete="username" autofocus required />
+
+        <label class="login-label" for="password">Password</label>
+        <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required />
+
+        <button class="login-submit" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

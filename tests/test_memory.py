@@ -26,3 +26,22 @@ def test_reset_clears_history():
     memory.add("user", "hi")
     memory.reset()
     assert len(memory) == 0
+
+
+def test_truncate_to_turns():
+    memory = ConversationMemory()
+    for i in range(5):
+        memory.add("user", f"msg-{i}")
+        memory.add("assistant", f"reply-{i}")
+
+    memory.truncate_to_turns(2)
+
+    assert len(memory) == 4
+    assert memory.messages[-1]["content"] == "reply-1"
+
+
+def test_truncate_to_turns_clamps_negative():
+    memory = ConversationMemory()
+    memory.add("user", "hi")
+    memory.truncate_to_turns(-3)
+    assert len(memory) == 0

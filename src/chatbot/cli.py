@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 
 from .config import settings
-from .llm_client import ClaudeClient, LLMError
+from .llm_client import LLMError, build_llm_client
 from .memory import ConversationMemory
 from .rag import Retriever
 
@@ -21,9 +21,12 @@ Commands:
 
 def _print_banner(rag_enabled: bool, rag_ready: bool) -> None:
     print("=" * 60)
-    print(" Claude AI Chatbot  (RAG-enabled)")
+    print(" OrbitPro  (RAG-enabled)")
     print("=" * 60)
-    print(f" Model: {settings.model}")
+    if settings.llm_provider.strip().lower() == "ollama":
+        print(f" Provider: Ollama ({settings.ollama_host})  |  Model: {settings.ollama_model}")
+    else:
+        print(f" Provider: Claude  |  Model: {settings.model}")
     rag_status = "on" if rag_enabled else "off"
     kb_status = "indexed" if rag_ready else "empty — run /ingest"
     print(f" RAG: {rag_status}  |  Knowledge base: {kb_status}")
@@ -32,7 +35,7 @@ def _print_banner(rag_enabled: bool, rag_ready: bool) -> None:
 
 
 def run() -> None:
-    if not settings.anthropic_api_key:
+    if settings.llm_provider.strip().lower() != "ollama" and not settings.anthropic_api_key:
         print(
             "[warn] ANTHROPIC_API_KEY is not set. Set it in a .env file or your "
             "environment, or run `ant auth login`.",
@@ -40,7 +43,7 @@ def run() -> None:
         )
 
     try:
-        client = ClaudeClient()
+        client = build_llm_client()
     except LLMError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         sys.exit(1)
@@ -103,7 +106,7 @@ def run() -> None:
 
         memory.add("user", user_input)
 
-        print("Claude: ", end="", flush=True)
+        print("OrbitPro: ", end="", flush=True)
         reply_parts: list[str] = []
         try:
             for chunk in client.stream_reply(memory.as_list(), context_chunks):

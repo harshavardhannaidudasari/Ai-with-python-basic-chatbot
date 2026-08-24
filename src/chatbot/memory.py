@@ -34,5 +34,12 @@ class ConversationMemory:
     def reset(self) -> None:
         self.messages.clear()
 
+    def truncate_to_turns(self, turns: int) -> None:
+        """Keep only the first `turns` user+assistant pairs, dropping the rest.
+
+        Used to rewind history when the user edits or retries an earlier turn.
+        """
+        self.messages = self.messages[: max(turns, 0) * 2]
+
     def __len__(self) -> int:
         return len(self.messages)

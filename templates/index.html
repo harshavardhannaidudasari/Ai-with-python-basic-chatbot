@@ -2,16 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Claude AI Chatbot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>OrbitPro</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}" />
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='images/favicon-180.png') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
   <div class="app">
     <header class="header">
-      <div>
-        <h1>Claude AI Chatbot</h1>
-        <p class="subtitle">Model: <code>{{ model }}</code> &middot; RAG-enabled</p>
+      <div class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='images/favicon-180.png') }}" alt="OrbitPro logo" />
+        <div class="brand-text">
+          <h1>Orbit<span class="brand-accent">Pro</span></h1>
+          <p class="tagline">Intelligence in Motion</p>
+          <p class="subtitle">Model: <code>{{ model }}</code> &middot; RAG-enabled</p>
+        </div>
       </div>
       <div class="controls">
         <label class="toggle">
@@ -19,27 +25,117 @@
           Use knowledge base
         </label>
         <button id="ingest-btn" title="(Re)index documents in data/docs/">Reindex docs</button>
+        <label class="file-btn" title="Upload a .txt/.md/.pdf into the knowledge base">
+          Upload doc
+          <input type="file" id="doc-input" accept=".txt,.md,.pdf" hidden />
+        </label>
+        <button id="talk-btn" title="Voice conversation">🎙️ Talk</button>
         <button id="reset-btn" title="Clear conversation">New chat</button>
+        {% if auth_enabled %}
+          <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+            <button type="submit" title="Sign out">Sign out</button>
+          </form>
+        {% endif %}
       </div>
     </header>
 
-    <main id="chat-window" class="chat-window">
-      <div class="message bot">
-        <div class="bubble">
-          Hi! I'm a Claude-powered assistant with retrieval-augmented answers.
-          {% if rag_ready %}
-            The knowledge base is loaded — ask me anything about the documents in <code>data/docs/</code>.
-          {% else %}
-            The knowledge base is empty — drop files into <code>data/docs/</code> and click "Reindex docs".
-          {% endif %}
-        </div>
+    <!-- Onboarding / empty state -->
+    <div id="hero" class="hero">
+      <div class="hero-robot-wrap">
+        <svg class="hero-robot" viewBox="0 0 160 180" aria-hidden="true">
+          <defs>
+            <linearGradient id="headGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#2c3660"/>
+              <stop offset="1" stop-color="#161b30"/>
+            </linearGradient>
+            <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#212a4d"/>
+              <stop offset="1" stop-color="#12162a"/>
+            </linearGradient>
+          </defs>
+          <line x1="80" y1="10" x2="80" y2="28" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>
+          <circle class="robot-antenna-dot" cx="80" cy="8" r="6" fill="var(--accent)"/>
+          <rect x="6" y="60" width="14" height="26" rx="7" fill="url(#headGrad)"/>
+          <rect x="140" y="60" width="14" height="26" rx="7" fill="url(#headGrad)"/>
+          <rect x="20" y="28" width="120" height="92" rx="30" fill="url(#headGrad)" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+          <g class="robot-eyes">
+            <circle cx="60" cy="73" r="13" fill="#0a0e1c"/>
+            <circle cx="100" cy="73" r="13" fill="#0a0e1c"/>
+            <circle cx="60" cy="73" r="6" fill="var(--accent)"/>
+            <circle cx="100" cy="73" r="6" fill="var(--accent)"/>
+          </g>
+          <rect x="64" y="96" width="32" height="6" rx="3" fill="rgba(255,255,255,0.5)"/>
+          <rect x="35" y="122" width="90" height="50" rx="20" fill="url(#bodyGrad)" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+          <circle class="robot-chest-light" cx="80" cy="147" r="10" fill="var(--accent)"/>
+        </svg>
       </div>
-    </main>
 
-    <form id="chat-form" class="chat-form">
-      <input id="chat-input" type="text" placeholder="Ask something..." autocomplete="off" autofocus />
-      <button type="submit">Send</button>
-    </form>
+      <h2 class="hero-heading">Meet <span class="brand-accent">OrbitPro</span>!</h2>
+
+      <div class="hero-bubble">Need our help now?</div>
+
+      <div class="hero-actions">
+        <button type="button" id="hero-chat-btn" class="hero-btn hero-btn-primary">💬 Chat with OrbitPro</button>
+        <button type="button" id="hero-voice-btn" class="hero-btn hero-btn-secondary">🎙️ Talk with OrbitPro</button>
+      </div>
+    </div>
+
+    <!-- Main chat view -->
+    <div id="chat-area" class="chat-area" hidden>
+      <div class="suggestions" id="suggestions">
+        <button type="button" class="suggestion-chip" data-prompt="Summarize the following text:&#10;&#10;">📝 Summarize text</button>
+        <button type="button" class="suggestion-chip" data-prompt="Explain this code:&#10;&#10;">💻 Explain code</button>
+        <button type="button" class="suggestion-chip" data-prompt="Brainstorm ideas for: ">💡 Brainstorm ideas</button>
+        <button type="button" class="suggestion-chip" data-prompt="Draft a short email about: ">✍️ Draft an email</button>
+      </div>
+
+      <main id="chat-window" class="chat-window">
+        <div class="message bot">
+          <div class="message-col">
+            <div class="bubble">
+              Hi! I'm OrbitPro, an AI assistant with retrieval-augmented answers.
+              {% if rag_ready %}
+                The knowledge base is loaded — ask me anything about the documents in <code>data/docs/</code>.
+              {% else %}
+                The knowledge base is empty — drop files into <code>data/docs/</code> and click "Reindex docs".
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div id="image-preview" class="image-preview" hidden>
+        <img id="image-preview-img" alt="Selected image" />
+        <button type="button" id="image-remove-btn" title="Remove image">&times;</button>
+      </div>
+
+      <form id="chat-form" class="chat-form">
+        <label class="file-btn image-attach-btn" title="Attach an image to analyze (vision model)">
+          &#128247;
+          <input type="file" id="image-input" accept="image/*" hidden />
+        </label>
+        <input id="chat-input" type="text" placeholder="Ask something..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+    <!-- Voice conversation view -->
+    <div id="voice-panel" class="voice-panel" hidden>
+      <button type="button" id="voice-back-btn" class="voice-back">&larr; Back</button>
+      <h2 class="voice-title">Voice Conversation</h2>
+
+      <div class="voice-wave-wrap">
+        <div class="voice-wave" id="voice-wave">
+          {% for i in range(28) %}<span class="wave-bar"></span>{% endfor %}
+        </div>
+        <button type="button" id="voice-mic-btn" class="voice-mic" title="Start listening">🎤</button>
+      </div>
+
+      <p class="voice-status" id="voice-status">Tap the mic to talk</p>
+      <p class="voice-transcript" id="voice-transcript"></p>
+
+      <button type="button" id="voice-mute-btn" class="voice-mute" title="Toggle spoken replies">🔊</button>
+    </div>
   </div>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>

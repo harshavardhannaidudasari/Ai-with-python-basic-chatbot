@@ -1,13 +1,17 @@
-# Claude AI Chatbot with RAG
+# OrbitPro
 
-A Python chatbot powered by Anthropic's Claude API, with Retrieval-Augmented
-Generation (RAG) over your own documents. Comes with both an interactive
-terminal client and a Flask-based browser chat UI.
+*Intelligence in Motion*
+
+A Python chatbot powered by Anthropic's Claude API (or a local Ollama model),
+with Retrieval-Augmented Generation (RAG) over your own documents. Comes with
+both an interactive terminal client and a Flask-based browser chat UI.
 
 ## Features
 
 - **Claude-powered chat** — streaming responses via the official `anthropic`
   Python SDK, with configurable model, effort, and system prompt.
+- **Local model support** — swap in a local [Ollama](https://ollama.com) model
+  (e.g. `llama3.2:1b`) instead of Claude, no API key or network required.
 - **Retrieval-Augmented Generation** — index `.txt`, `.md`, and `.pdf` files
   and have the bot ground its answers in them, citing sources.
 - **Local embeddings** — uses `sentence-transformers` for embeddings, so
@@ -73,6 +77,21 @@ Claude's system prompt as grounding context.
    Then edit `.env` and set `ANTHROPIC_API_KEY` to your key from
    [console.anthropic.com](https://console.anthropic.com/settings/keys).
 
+   **Or run fully local with Ollama** — install [Ollama](https://ollama.com),
+   pull a small model, and switch the provider:
+
+   ```bash
+   ollama pull llama3.2:1b
+   ```
+
+   ```env
+   LLM_PROVIDER=ollama
+   OLLAMA_MODEL=llama3.2:1b
+   OLLAMA_HOST=http://localhost:11434
+   ```
+
+   No API key needed — just make sure the Ollama app/service is running.
+
 ## Usage
 
 ### Terminal chat
@@ -122,10 +141,13 @@ All settings live in `.env` (see `.env.example` for the full list):
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Your Anthropic API key |
+| `LLM_PROVIDER` | `claude` | `claude` (API) or `ollama` (local, no key needed) |
+| `ANTHROPIC_API_KEY` | — | Your Anthropic API key (required when `LLM_PROVIDER=claude`) |
 | `CLAUDE_MODEL` | `claude-opus-5` | Model to use — try `claude-haiku-4-5-20251001` for a faster/cheaper bot |
 | `MAX_TOKENS` | `2048` | Max response length |
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
+| `OLLAMA_MODEL` | `llama3.2:1b` | Local model to use when `LLM_PROVIDER=ollama` |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |
 | `TOP_K` | `4` | Number of chunks retrieved per query |
 | `MIN_SIMILARITY` | `0.2` | Minimum cosine similarity for a chunk to be used |

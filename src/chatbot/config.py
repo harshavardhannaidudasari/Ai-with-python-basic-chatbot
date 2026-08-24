@@ -33,10 +33,16 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     # LLM
+    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "claude"))
     anthropic_api_key: str | None = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY"))
     model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-opus-5"))
     max_tokens: int = field(default_factory=lambda: _env_int("MAX_TOKENS", 2048))
     effort: str = field(default_factory=lambda: os.getenv("CLAUDE_EFFORT", "medium"))
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.2:3b"))
+    ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+    ollama_vision_model: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "llava-phi3")
+    )
     system_prompt: str = field(
         default_factory=lambda: os.getenv(
             "SYSTEM_PROMPT",
