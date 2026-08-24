@@ -48,4 +48,4 @@ jobs:
             exit 1
           }
 
-          Write-Output "Deploy successful — server is responding."
+          Write-Output "Deploy successful - server is responding."
