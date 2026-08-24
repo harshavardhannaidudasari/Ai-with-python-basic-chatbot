@@ -9,7 +9,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Pull latest and restart the server
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           $projectDir = "F:\IdeaProjects\Ai-with-python-basic-chatbot"
