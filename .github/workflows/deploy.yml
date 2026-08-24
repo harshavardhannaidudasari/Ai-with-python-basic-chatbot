@@ -38,7 +38,7 @@ jobs:
           # the runner's job process tree (otherwise the runner kills it as an
           # "orphan" once this job step completes).
           $taskName = "OrbitProWebServer"
-          schtasks /delete /tn $taskName /f 2>$null
+          cmd /c "schtasks /delete /tn $taskName /f >nul 2>&1"
           schtasks /create /tn $taskName /tr "`"$projectDir\scripts\start_server.bat`"" /sc once /st 00:00 /sd 01/01/2050 /rl highest /f | Out-Null
           schtasks /run /tn $taskName | Out-Null
 
