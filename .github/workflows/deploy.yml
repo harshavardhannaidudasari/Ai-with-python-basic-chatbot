@@ -39,7 +39,7 @@ jobs:
           # "orphan" once this job step completes).
           $taskName = "OrbitProWebServer"
           cmd /c "schtasks /delete /tn $taskName /f >nul 2>&1"
-          cmd /c "schtasks /create /tn $taskName /tr `"$projectDir\scripts\start_server.bat`" /sc once /st 00:00 /sd 01/01/2050 /f >nul 2>&1"
+          cmd /c "schtasks /create /tn $taskName /tr `"$projectDir\scripts\start_server.bat`" /sc once /st 00:00 /sd 01/01/2050 /f"
           if ($LASTEXITCODE -ne 0) {
             throw "schtasks create failed with exit code $LASTEXITCODE"
           }
