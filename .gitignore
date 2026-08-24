@@ -4,6 +4,11 @@ __pycache__/
 venv/
 .env
 data/index/
+# Ignore anything uploaded to the knowledge base at runtime; keep only the
+# tracked sample docs the project ships with.
+data/docs/*
+!data/docs/about_this_project.md
+!data/docs/architecture.md
 .pytest_cache/
 *.egg-info/
 .DS_Store
