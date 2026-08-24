@@ -1,0 +1,51 @@
+name: Deploy OrbitPro
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest and restart the server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $projectDir = "F:\IdeaProjects\Ai-with-python-basic-chatbot"
+
+          Set-Location $projectDir
+          git pull origin main
+
+          & "$projectDir\.venv\Scripts\python.exe" -m pip install -r requirements.txt -q
+
+          Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+            Where-Object { $_.CommandLine -like '*web_app.py*' } |
+            ForEach-Object {
+              Write-Output "Stopping existing server (PID $($_.ProcessId))"
+              Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+
+          Start-Sleep -Seconds 2
+
+          Start-Process -FilePath "$projectDir\.venv\Scripts\python.exe" `
+            -ArgumentList "web_app.py" `
+            -WorkingDirectory $projectDir `
+            -WindowStyle Hidden
+
+          Start-Sleep -Seconds 3
+
+          $ok = $false
+          try {
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:5000/login" -UseBasicParsing -TimeoutSec 10
+            $ok = $resp.StatusCode -eq 200
+          } catch {
+            $ok = $false
+          }
+
+          if (-not $ok) {
+            Write-Error "Server did not come back up after deploy."
+            exit 1
+          }
+
+          Write-Output "Deploy successful — server is responding."
