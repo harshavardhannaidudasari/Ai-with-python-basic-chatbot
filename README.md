@@ -123,7 +123,7 @@ All settings live in `.env` (see `.env.example` for the full list):
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Your Anthropic API key |
-| `CLAUDE_MODEL` | `claude-opus-5` | Model to use — try `claude-haiku-4-5` for a faster/cheaper bot |
+| `CLAUDE_MODEL` | `claude-opus-5` | Model to use — try `claude-haiku-4-5-20251001` for a faster/cheaper bot |
 | `MAX_TOKENS` | `2048` | Max response length |
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |
