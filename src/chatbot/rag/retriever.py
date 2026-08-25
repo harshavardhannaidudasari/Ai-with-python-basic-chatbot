@@ -54,6 +54,10 @@ class Retriever:
     def is_ready(self) -> bool:
         return not self.store.is_empty()
 
+    def chunks_for_source(self, source: str) -> int:
+        """Count indexed chunks that came from a given file name (post-`ingest()`)."""
+        return sum(1 for m in self.store.metadata if m["source"] == source)
+
     def retrieve(self, query: str, top_k: int | None = None) -> list[SearchResult]:
         if self.store.is_empty():
             return []

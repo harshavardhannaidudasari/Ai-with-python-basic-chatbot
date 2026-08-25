@@ -71,3 +71,7 @@ class VectorStore:
     @property
     def size(self) -> int:
         return 0 if self.is_empty() else self._vectors.shape[0]
+
+    @property
+    def metadata(self) -> list[dict]:
+        return self._metadata

@@ -241,7 +241,7 @@ function textTurnsBefore(index) {
   return turns.slice(0, index).filter((t) => !t.image).length;
 }
 
-async function sendTurn(message, image) {
+async function sendTurn(message, image, onToken) {
   const index = turns.length;
   const turn = { userText: message, image, botText: "", sources: [], sourceMode: null };
   turns.push(turn);
@@ -257,7 +257,7 @@ async function sendTurn(message, image) {
     body.truncate_to = truncateTo;
   }
 
-  await streamChat(body, turn);
+  await streamChat(body, turn, onToken);
   return turn;
 }
 
@@ -265,7 +265,7 @@ async function sendTurn(message, image) {
 // so we only send `truncate_to` when we're actually rewinding history.
 let countPriorTextTurnsOnServer = 0;
 
-async function streamChat(body, turn) {
+async function streamChat(body, turn, onToken) {
   let response;
   try {
     response = await fetch("/api/chat", {
@@ -298,43 +298,57 @@ async function streamChat(body, turn) {
   let buffer = "";
   let text = "";
   let started = false;
+  let streamError = null;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  // The connection can drop mid-stream — a mobile tab getting backgrounded
+  // (a call comes in, the user switches apps) is enough to kill it. Without
+  // this try/catch, `reader.read()` throwing here left the bubble stuck on
+  // "Thinking…" forever with no way to tell the conversation had stalled.
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    let sepIndex;
-    while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-      const rawEvent = buffer.slice(0, sepIndex);
-      buffer = buffer.slice(sepIndex + 2);
+      let sepIndex;
+      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, sepIndex);
+        buffer = buffer.slice(sepIndex + 2);
 
-      const eventLine = rawEvent.split("\n").find((l) => l.startsWith("event:"));
-      const dataLine = rawEvent.split("\n").find((l) => l.startsWith("data:"));
-      if (!eventLine || !dataLine) continue;
+        const eventLine = rawEvent.split("\n").find((l) => l.startsWith("event:"));
+        const dataLine = rawEvent.split("\n").find((l) => l.startsWith("data:"));
+        if (!eventLine || !dataLine) continue;
 
-      const event = eventLine.slice(6).trim();
-      const data = JSON.parse(dataLine.slice(5).trim());
+        const event = eventLine.slice(6).trim();
+        const data = JSON.parse(dataLine.slice(5).trim());
 
-      if (event === "sources") {
-        turn.sources = data.sources || [];
-        turn.sourceMode = data.source_mode || null;
-      } else if (event === "token") {
-        if (!started) {
-          turn.botBubble.textContent = "";
-          started = true;
+        if (event === "sources") {
+          turn.sources = data.sources || [];
+          turn.sourceMode = data.source_mode || null;
+        } else if (event === "token") {
+          if (!started) {
+            turn.botBubble.textContent = "";
+            started = true;
+          }
+          text += data.text;
+          turn.botBubble.textContent = text;
+          scrollToBottom();
+          onToken?.(data.text, text);
+        } else if (event === "error") {
+          turn.botBubble.textContent = `Error: ${data.error}`;
         }
-        text += data.text;
-        turn.botBubble.textContent = text;
-        scrollToBottom();
-      } else if (event === "error") {
-        turn.botBubble.textContent = `Error: ${data.error}`;
       }
     }
+  } catch (err) {
+    streamError = err;
   }
 
   turn.botText = text;
-  if (!started && !text) {
+  if (streamError) {
+    turn.botBubble.textContent = text
+      ? `${text}\n\n[Connection interrupted — tap Retry to continue.]`
+      : "Connection interrupted before a response arrived. Tap Retry.";
+  } else if (!started && !text) {
     turn.botBubble.textContent = "(no response)";
   }
 
@@ -413,8 +427,13 @@ docInput.addEventListener("change", async () => {
     const data = await response.json();
     if (!response.ok) {
       addSystemMessage(`Error: ${data.error || "upload failed"}`);
+    } else if (data.warning) {
+      addSystemMessage(`⚠️ ${data.warning}`);
     } else {
-      addSystemMessage(`Uploaded ${data.filename} — indexed ${data.chunks_indexed} chunks from data/docs/.`);
+      addSystemMessage(
+        `Uploaded ${data.filename} — indexed ${data.file_chunks} chunk(s) from it ` +
+        `(${data.chunks_indexed} total in the knowledge base).`
+      );
     }
   } catch (err) {
     addSystemMessage(`Network error: ${err.message}`);
@@ -537,27 +556,50 @@ voiceMuteBtn.addEventListener("click", () => {
   }
 });
 
-function speak(text) {
+// Queues one utterance without interrupting what's already speaking — used
+// to speak a reply sentence-by-sentence as it streams in, rather than
+// waiting for the whole answer (which is what made voice replies feel very
+// slow: no sound at all until generation had fully finished).
+function enqueueSpeech(text) {
   if (ttsMuted || !window.speechSynthesis || !text) return;
-  window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = navigator.language || "en-US";
   window.speechSynthesis.speak(utterance);
 }
+
+// Matches a sentence boundary once trailing whitespace/newlines follow it,
+// so we don't speak "Mr." as a full sentence.
+const SENTENCE_BOUNDARY = /[.!?](?:\s|$)/;
 
 async function handleVoiceFinalTranscript(text) {
   if (!text) return;
   voiceBusy = true;
   voiceStatus.textContent = "Thinking…";
   voiceMicBtn.disabled = true;
+  voiceTranscript.textContent = `You: ${text}`;
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
 
-  const turn = await sendTurn(text, null);
+  let spokenUpTo = 0;
+  const onToken = (_chunk, fullText) => {
+    voiceTranscript.textContent = `You: ${text}\n\n${fullText}`;
+    let boundary;
+    while ((boundary = fullText.slice(spokenUpTo).search(SENTENCE_BOUNDARY)) !== -1) {
+      const cut = spokenUpTo + boundary + 1;
+      enqueueSpeech(fullText.slice(spokenUpTo, cut).trim());
+      spokenUpTo = cut;
+    }
+  };
 
-  voiceMicBtn.disabled = false;
-  voiceBusy = false;
-  voiceStatus.textContent = "Tap the mic to talk";
-  if (turn && turn.botText) {
-    voiceTranscript.textContent = `You: ${text}\n\n${turn.botText}`;
-    speak(turn.botText);
+  try {
+    const turn = await sendTurn(text, null, onToken);
+    if (turn && turn.botText) {
+      voiceTranscript.textContent = `You: ${text}\n\n${turn.botText}`;
+      const remainder = turn.botText.slice(spokenUpTo).trim();
+      if (remainder) enqueueSpeech(remainder);
+    }
+  } finally {
+    voiceMicBtn.disabled = false;
+    voiceBusy = false;
+    voiceStatus.textContent = "Tap the mic to talk";
   }
 }

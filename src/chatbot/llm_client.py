@@ -103,6 +103,37 @@ class ClaudeClient:
             return "I'm not able to help with that request."
         return "".join(block.text for block in final.content if block.type == "text")
 
+    def stream_reply_with_image(
+        self, prompt: str, image_b64: str, media_type: str = "image/jpeg"
+    ) -> Iterator[str]:
+        """Yield text chunks describing/answering about a single attached image.
+
+        Single-turn only (no conversation history, no RAG context), matching
+        `OllamaClient.stream_reply_with_image`'s contract.
+        """
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": image_b64},
+                    },
+                    {"type": "text", "text": prompt or "Describe this image."},
+                ],
+            }
+        ]
+        kwargs = self._build_kwargs(settings.system_prompt, messages)
+        try:
+            with self.client.messages.stream(**kwargs) as stream:
+                yield from stream.text_stream
+        except anthropic.APIStatusError as exc:
+            raise LLMError(f"Claude API error ({exc.status_code}): {exc.message}") from exc
+        except anthropic.APIConnectionError as exc:
+            raise LLMError(f"Network error contacting Claude API: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not get a response from Claude: {exc}") from exc
+
 
 class OllamaClient:
     """Wraps a local Ollama server (https://ollama.com) with the same interface as `ClaudeClient`."""
@@ -148,11 +179,15 @@ class OllamaClient:
             ) from exc
         return response["message"]["content"]
 
-    def stream_reply_with_image(self, prompt: str, image_b64: str) -> Iterator[str]:
+    def stream_reply_with_image(
+        self, prompt: str, image_b64: str, media_type: str = "image/jpeg"
+    ) -> Iterator[str]:
         """Yield text chunks describing/answering about a single attached image.
 
         Single-turn only (no conversation history, no RAG context) — kept
         simple since vision models are used for one-off image questions.
+        `media_type` is accepted for interface parity with `ClaudeClient` but
+        unused here — Ollama infers the image format from the raw bytes.
         """
         message = {"role": "user", "content": prompt or "Describe this image.", "images": [image_b64]}
         try:

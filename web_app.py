@@ -40,7 +40,6 @@ LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 60
 
 client: ClaudeClient | OllamaClient | None = None
-vision_client: OllamaClient | None = None
 retriever = Retriever()
 _sessions: dict[str, ConversationMemory] = {}
 _login_failures: dict[str, list[float]] = {}
@@ -53,13 +52,13 @@ def get_client() -> ClaudeClient | OllamaClient:
     return client
 
 
-def get_vision_client() -> OllamaClient:
-    # Image analysis always goes through a local Ollama vision model,
-    # regardless of LLM_PROVIDER — Claude vision isn't wired up here.
-    global vision_client
-    if vision_client is None:
-        vision_client = OllamaClient()
-    return vision_client
+def _parse_data_url(data_url: str) -> tuple[str, str]:
+    """Split a `data:<media_type>;base64,<data>` URL into `(media_type, data)`."""
+    header, _, encoded = data_url.partition(",")
+    media_type = "image/jpeg"
+    if header.startswith("data:") and ";base64" in header:
+        media_type = header[len("data:"):].split(";", 1)[0] or media_type
+    return media_type, encoded
 
 
 def _sse(event: str, data: dict) -> str:
@@ -172,11 +171,14 @@ def chat():
     if image_data_url:
         # Image turns are single-shot: no conversation history, no RAG.
         source_mode = "image"
-        image_b64 = image_data_url.split(",", 1)[-1]
-        stream = get_vision_client().stream_reply_with_image(message, image_b64)
+        media_type, image_b64 = _parse_data_url(image_data_url)
+        stream = get_client().stream_reply_with_image(message, image_b64, media_type)
     else:
         if use_rag and retriever.is_ready():
-            results = retriever.retrieve(message)
+            try:
+                results = retriever.retrieve(message)
+            except Exception as exc:
+                return jsonify({"error": f"Knowledge base lookup failed: {exc}"}), 500
             context_chunks = [f"[Source: {r.source}]\n{r.text}" for r in results]
             sources = sorted({r.source for r in results})
             source_mode = "rag" if sources else "no_match"
@@ -186,19 +188,37 @@ def chat():
         stream = get_client().stream_reply(memory.as_list(), context_chunks)
 
     def generate():
-        yield _sse("sources", {"sources": sources, "source_mode": source_mode})
         reply_parts: list[str] = []
+        error: str | None = None
         try:
+            # The disconnect this guards against can happen at *any* yield,
+            # including this very first one — a client that vanishes before
+            # a single token arrives is the same dangling-message scenario as
+            # one that vanishes mid-reply. Both must go through the `finally`
+            # below, so both live inside this same try block.
+            yield _sse("sources", {"sources": sources, "source_mode": source_mode})
             for chunk in stream:
                 reply_parts.append(chunk)
                 yield _sse("token", {"text": chunk})
         except LLMError as exc:
+            error = str(exc)
+        finally:
+            # Runs even if the client disconnects mid-stream (e.g. the tab is
+            # backgrounded on mobile and the connection drops): without this,
+            # the earlier `memory.add("user", message)` is left dangling with
+            # no matching assistant turn, and the *next* message sent breaks
+            # the API's required user/assistant alternation — the conversation
+            # can't continue and retry can't recover it either.
             if not image_data_url:
-                memory.messages.pop()
-            yield _sse("error", {"error": str(exc)})
+                if error:
+                    memory.messages.pop()
+                elif reply_parts:
+                    memory.add("assistant", "".join(reply_parts))
+                else:
+                    memory.messages.pop()
+        if error:
+            yield _sse("error", {"error": error})
             return
-        if not image_data_url:
-            memory.add("assistant", "".join(reply_parts))
         yield _sse("done", {})
 
     return Response(generate(), mimetype="text/event-stream")
@@ -218,13 +238,33 @@ def upload_doc():
     retriever.docs_dir.mkdir(parents=True, exist_ok=True)
     file.save(retriever.docs_dir / filename)
 
-    count = retriever.ingest()
-    return jsonify({"filename": filename, "chunks_indexed": count, "ready": retriever.is_ready()})
+    try:
+        count = retriever.ingest()
+    except Exception as exc:
+        return jsonify({"error": f"Failed to index documents: {exc}"}), 500
+
+    file_chunks = retriever.chunks_for_source(filename)
+    response = {
+        "filename": filename,
+        "chunks_indexed": count,
+        "file_chunks": file_chunks,
+        "ready": retriever.is_ready(),
+    }
+    if file_chunks == 0:
+        response["warning"] = (
+            f"No extractable text was found in {filename} — it may be a scanned/"
+            "image-based PDF, empty, or in an unsupported encoding. It was not "
+            "added to the knowledge base."
+        )
+    return jsonify(response)
 
 
 @app.route("/api/ingest", methods=["POST"])
 def ingest():
-    count = retriever.ingest()
+    try:
+        count = retriever.ingest()
+    except Exception as exc:
+        return jsonify({"error": f"Failed to index documents: {exc}"}), 500
     return jsonify({"chunks_indexed": count, "ready": retriever.is_ready()})
 
 
