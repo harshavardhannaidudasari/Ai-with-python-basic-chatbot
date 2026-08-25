@@ -147,16 +147,43 @@ class OllamaClient:
     def _chat_messages(self, system: str, messages: list[dict]) -> list[dict]:
         return [{"role": "system", "content": system}, *messages]
 
+    @staticmethod
+    def _options() -> dict | None:
+        # keep_alive/num_predict are set here rather than left at Ollama's
+        # defaults: on slow/CPU-only hardware, an idle model gets unloaded
+        # between messages (paying a full reload on the next one), and an
+        # uncapped reply can run for tens of seconds longer than needed.
+        return {"num_predict": settings.ollama_num_predict} if settings.ollama_num_predict > 0 else None
+
+    def _unload(self, model: str) -> None:
+        # Best-effort eviction of a model we're *not* about to use. Keeping
+        # the text model warm (see OLLAMA_KEEP_ALIVE) speeds up back-to-back
+        # text messages, but on machines without enough RAM for both the text
+        # and vision models at once, Ollama's own automatic eviction can fail
+        # outright (observed: an out-of-memory crash trying to load the
+        # vision model while the text model was still resident) rather than
+        # just evicting the old one. Explicitly unloading the model we're
+        # switching away from avoids that collision.
+        if settings.ollama_model == settings.ollama_vision_model:
+            return  # same model serves both roles — nothing to evict
+        try:
+            self.client.generate(model=model, keep_alive=0)
+        except Exception:
+            pass
+
     def stream_reply(
         self, messages: list[dict], context_chunks: list[str] | None = None
     ) -> Iterator[str]:
         """Yield text chunks as they arrive from the model."""
         system = self.build_system_prompt(context_chunks)
+        self._unload(settings.ollama_vision_model)
         try:
             for part in self.client.chat(
                 model=settings.ollama_model,
                 messages=self._chat_messages(system, messages),
                 stream=True,
+                keep_alive=settings.ollama_keep_alive,
+                options=self._options(),
             ):
                 yield part["message"]["content"]
         except Exception as exc:
@@ -167,11 +194,14 @@ class OllamaClient:
     def reply(self, messages: list[dict], context_chunks: list[str] | None = None) -> str:
         """Return the full response text in one call (used by the web API)."""
         system = self.build_system_prompt(context_chunks)
+        self._unload(settings.ollama_vision_model)
         try:
             response = self.client.chat(
                 model=settings.ollama_model,
                 messages=self._chat_messages(system, messages),
                 stream=False,
+                keep_alive=settings.ollama_keep_alive,
+                options=self._options(),
             )
         except Exception as exc:
             raise LLMError(
@@ -190,11 +220,14 @@ class OllamaClient:
         unused here — Ollama infers the image format from the raw bytes.
         """
         message = {"role": "user", "content": prompt or "Describe this image.", "images": [image_b64]}
+        self._unload(settings.ollama_model)
         try:
             for part in self.client.chat(
                 model=settings.ollama_vision_model,
                 messages=[message],
                 stream=True,
+                keep_alive=settings.ollama_keep_alive,
+                options=self._options(),
             ):
                 yield part["message"]["content"]
         except Exception as exc:

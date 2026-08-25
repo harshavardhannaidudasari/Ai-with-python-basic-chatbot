@@ -43,6 +43,11 @@ class Settings:
     ollama_vision_model: str = field(
         default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "llava-phi3")
     )
+    # How long Ollama keeps a model resident in memory after a request, so
+    # back-to-back messages don't each pay a full reload-from-disk cost.
+    ollama_keep_alive: str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m"))
+    # Caps worst-case generation time on slow/CPU-only hardware. 0 = unlimited.
+    ollama_num_predict: int = field(default_factory=lambda: _env_int("OLLAMA_NUM_PREDICT", 512))
     system_prompt: str = field(
         default_factory=lambda: os.getenv(
             "SYSTEM_PROMPT",

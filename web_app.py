@@ -13,6 +13,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 import uuid
 from datetime import timedelta
@@ -50,6 +51,29 @@ def get_client() -> ClaudeClient | OllamaClient:
     if client is None:
         client = build_llm_client()
     return client
+
+
+def _warm_up() -> None:
+    """Pay cold-start costs (model load, embedder load) at boot instead of on
+    the first user's request.
+
+    Only useful for Ollama: Claude has no local model to load, and sending it
+    a throwaway request would just cost money for nothing. Only the text
+    model is warmed, not vision — on 8GB RAM the two don't comfortably stay
+    loaded at once, so warming both would just make one evict the other
+    before it's ever used.
+    """
+    try:
+        if retriever.is_ready():
+            retriever.embedder  # noqa: B018 - property access triggers the lazy load
+    except Exception as exc:
+        print(f"[warn] embedder warm-up failed: {exc}", file=sys.stderr)
+
+    if settings.llm_provider.strip().lower() == "ollama":
+        try:
+            list(get_client().stream_reply([{"role": "user", "content": "Hi"}]))
+        except Exception as exc:
+            print(f"[warn] Ollama warm-up failed: {exc}", file=sys.stderr)
 
 
 def _parse_data_url(data_url: str) -> tuple[str, str]:
@@ -285,6 +309,11 @@ if __name__ == "__main__":
             "Fine for localhost-only use; set both in .env before exposing this publicly.",
             file=sys.stderr,
         )
+
+    # Skip in the debug reloader's watcher process (it re-executes this whole
+    # block but never serves requests) so warm-up doesn't run twice.
+    if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        threading.Thread(target=_warm_up, daemon=True).start()
 
     if debug_mode:
         app.run(debug=True, host=host, port=port)

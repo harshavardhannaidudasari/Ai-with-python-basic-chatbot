@@ -48,11 +48,13 @@ jobs:
             throw "schtasks run failed with exit code $LASTEXITCODE"
           }
 
-          # Cold start can take a while (loading the local embedding model etc.),
-          # so poll instead of a single fixed-delay check.
+          # Cold start can take a while on this runner's hardware (importing
+          # torch/sentence-transformers alone can take well over 30s before
+          # the process even starts listening), so give it real headroom
+          # instead of giving up almost immediately.
           $ok = $false
-          for ($i = 0; $i -lt 15; $i++) {
-            Start-Sleep -Seconds 2
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 3
             try {
               $resp = Invoke-WebRequest -Uri "http://127.0.0.1:5000/login" -UseBasicParsing -TimeoutSec 5
               if ($resp.StatusCode -eq 200) {
@@ -65,7 +67,7 @@ jobs:
           }
 
           if (-not $ok) {
-            Write-Error "Server did not come back up after deploy (waited 30s)."
+            Write-Error "Server did not come back up after deploy (waited 180s)."
             exit 1
           }
 
