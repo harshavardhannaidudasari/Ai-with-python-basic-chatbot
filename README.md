@@ -137,6 +137,37 @@ Drop `.txt`, `.md`, or `.pdf` files into `data/docs/`, then run `/ingest`
 (terminal) or click **Reindex docs** (web UI). The index is rebuilt from
 scratch each time and persisted to `data/index/`.
 
+### Voice cloning (optional, free, local)
+
+Voice mode can speak in a specific cloned voice instead of one of Groq's
+presets, using [Coqui XTTS-v2](https://github.com/idiap/coqui-ai-TTS) —
+zero-shot cloning from a short reference clip, running entirely on your own
+machine. It's free (no API key, no per-request cost) but heavy: it installs
+~2GB of ML dependencies, downloads a ~1.9GB model on first use, and takes
+several seconds of CPU time per sentence — noticeably slower than Groq's
+near-instant API. It's also **not viable on Render's free tier** (not
+enough memory) — this is a local-only feature; leave `VOICE_CLONE_REFERENCE`
+unset in your Render environment and it uses Groq TTS instead, same as
+before.
+
+```bash
+pip install -r requirements-voice-clone.txt
+```
+
+Then in `.env`:
+
+```
+VOICE_CLONE_REFERENCE=data/voice_reference/reference.mp3
+VOICE_CLONE_LANGUAGE=en
+```
+
+`VOICE_CLONE_REFERENCE` points at a 6-second-or-longer sample of the target
+voice (wav or mp3). `data/voice_reference/` is gitignored, so drop your own
+sample there — it stays local, never committed. If the clone model fails to
+load (dependencies missing, bad reference file, etc.), voice mode falls
+back to Groq automatically, then to the browser's built-in voice if that
+also fails — it never goes silent.
+
 ### Running tests
 
 ```bash
@@ -199,7 +230,8 @@ All settings live in `.env` (see `.env.example` for the full list):
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
 | `GROQ_API_KEY` | — | Your Groq API key (required when `LLM_PROVIDER=groq`) — free, from [console.groq.com/keys](https://console.groq.com/keys) |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq-hosted model to use when `LLM_PROVIDER=groq` |
-| `GROQ_TTS_VOICE` | `troy` | Voice mode's spoken-reply voice (Groq Orpheus TTS) — used whenever `GROQ_API_KEY` is set, regardless of `LLM_PROVIDER` |
+| `GROQ_TTS_VOICE` | `hannah` | Voice mode's spoken-reply voice (Groq Orpheus TTS) — used whenever `GROQ_API_KEY` is set, regardless of `LLM_PROVIDER`. Female: `hannah`/`autumn`/`diana`. Male: `troy`/`austin`/`daniel` |
+| `VOICE_CLONE_REFERENCE` | — | Path to a reference audio sample to clone for voice mode instead of a Groq preset. Free, local-only — see [Voice cloning](#voice-cloning-optional-free-local) below |
 | `OLLAMA_MODEL` | `llama3.2:1b` | Local model to use when `LLM_PROVIDER=ollama` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |

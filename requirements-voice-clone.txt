@@ -1,0 +1,20 @@
+# Optional, local-only: install this to enable cloning a specific voice
+# (VOICE_CLONE_REFERENCE in .env) for voice mode's spoken replies, instead
+# of Groq's preset voices. Free — no API key, runs entirely on your machine
+# — but heavy: ~2GB of ML dependencies plus a ~1.9GB model download on first
+# use, and several seconds of CPU inference per sentence. Not installed as
+# part of the default requirements.txt since it isn't viable on Render's
+# free tier (or any low-memory host) — leave VOICE_CLONE_REFERENCE unset
+# there and the app uses Groq TTS instead, same as before this feature.
+#
+#   pip install -r requirements-voice-clone.txt
+#
+# coqui-tts pins its transformers dependency loosely (>=4.57), and pip's
+# resolver picks the newest match — but XTTS-v2's model code isn't
+# compatible with the transformers 5.x API yet, so pin explicitly to the
+# last-known-working 4.x release (confirmed working as of 2026-08-26).
+coqui-tts[cpu]>=0.27.5
+transformers==4.57.6
+# Required for audio I/O with torch>=2.9 (coqui-tts doesn't declare this as
+# a hard dependency, only suggesting it at import time on failure).
+torchcodec>=0.8.0

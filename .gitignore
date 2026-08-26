@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .env
 data/index/
+data/voice_reference/
 # Ignore anything uploaded to the knowledge base at runtime; keep only the
 # tracked sample docs the project ships with.
 data/docs/*

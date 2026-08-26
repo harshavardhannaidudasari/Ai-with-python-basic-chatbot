@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 from collections.abc import Iterator
 
 import anthropic
@@ -386,6 +388,26 @@ _tts_client: groq.Groq | None = None
 
 
 def synthesize_speech(text: str) -> bytes:
+    """Return WAV audio bytes for `text`, spoken by voice mode's chosen voice.
+
+    Tries the local voice clone first (settings.voice_clone_reference) if
+    one is configured, since it's a specific chosen voice rather than a
+    preset; falls back to Groq's Orpheus TTS on any failure (including the
+    clone's heavy ML dependencies simply not being installed — expected on
+    a resource-constrained deploy like Render's free tier, where
+    VOICE_CLONE_REFERENCE is intentionally left unset). If neither is
+    configured/available, the caller (web_app's /api/speak) surfaces the
+    error and the frontend falls back further, to the browser's own voice.
+    """
+    if settings.voice_clone_reference:
+        try:
+            return synthesize_speech_clone(text)
+        except Exception as exc:
+            print(f"[voice-clone] falling back to Groq TTS: {exc}")
+    return synthesize_speech_groq(text)
+
+
+def synthesize_speech_groq(text: str) -> bytes:
     """Return WAV audio bytes for `text`, spoken by Groq's Orpheus TTS voice.
 
     Independent of LLM_PROVIDER: voice mode's spoken replies use this
@@ -401,22 +423,40 @@ def synthesize_speech(text: str) -> bytes:
         except Exception as exc:  # pragma: no cover - defensive
             raise LLMError(f"Failed to initialize Groq TTS client: {exc}") from exc
 
-    try:
-        response = _tts_client.audio.speech.create(
-            model=settings.groq_tts_model,
-            voice=settings.groq_tts_voice,
-            input=text,
-            # Orpheus only accepts "wav" — other Groq TTS models accept more
-            # formats (flac/mp3/mulaw/ogg/wav), but this app is pinned to
-            # Orpheus specifically, so keep it simple rather than probing.
-            response_format="wav",
-        )
-    except groq.APIStatusError as exc:
-        raise LLMError(f"Groq TTS error ({exc.status_code}): {exc.message}") from exc
-    except groq.APIConnectionError as exc:
-        raise LLMError(f"Network error contacting Groq TTS: {exc}") from exc
-    except Exception as exc:
-        raise LLMError(f"Could not synthesize speech via Groq: {exc}") from exc
+    # One sentence = one request, and a longer reply fires several of these
+    # in quick succession — enough to trip Groq's per-minute rate limit or
+    # hit an occasional transient blip mid-conversation. Each such failure
+    # used to fall straight back to the browser's robotic voice for that one
+    # sentence, so a reply would audibly flip between the human Orpheus
+    # voice and the robotic fallback. Retrying once after a short backoff
+    # absorbs those transient cases so the human voice stays consistent;
+    # only a genuinely persistent failure still falls back.
+    for attempt in range(2):
+        try:
+            response = _tts_client.audio.speech.create(
+                model=settings.groq_tts_model,
+                voice=settings.groq_tts_voice,
+                input=text,
+                # Orpheus only accepts "wav" — other Groq TTS models accept
+                # more formats (flac/mp3/mulaw/ogg/wav), but this app is
+                # pinned to Orpheus specifically, so keep it simple rather
+                # than probing.
+                response_format="wav",
+            )
+            break
+        except groq.APIStatusError as exc:
+            retryable = exc.status_code == 429 or exc.status_code >= 500
+            if retryable and attempt == 0:
+                time.sleep(0.6)
+                continue
+            raise LLMError(f"Groq TTS error ({exc.status_code}): {exc.message}") from exc
+        except groq.APIConnectionError as exc:
+            if attempt == 0:
+                time.sleep(0.6)
+                continue
+            raise LLMError(f"Network error contacting Groq TTS: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not synthesize speech via Groq: {exc}") from exc
 
     # The SDK's response object only exposes write_to_file(path), not raw
     # bytes directly, so round-trip through a temp file.
@@ -428,3 +468,80 @@ def synthesize_speech(text: str) -> bytes:
             return f.read()
     finally:
         os.remove(tmp_path)
+
+
+_clone_tts_client = None
+_clone_tts_lock = threading.Lock()
+
+
+def synthesize_speech_clone(text: str) -> bytes:
+    """Return WAV audio bytes for `text`, spoken in a cloned reference voice.
+
+    Zero-shot voice cloning via Coqui XTTS-v2, running entirely locally from
+    settings.voice_clone_reference (a short sample of the target voice) —
+    no API, no per-request cost, unlike Groq/ElevenLabs/etc. The tradeoff is
+    resource cost instead of money: ~2GB of model weights plus a heavy
+    ML dependency chain (torch/transformers/coqui-tts — see
+    requirements-voice-clone.txt, not part of the default install), and
+    CPU inference that takes several seconds per sentence rather than
+    Groq's near-instant API response. Not viable on Render's free tier.
+    """
+    global _clone_tts_client
+    if _clone_tts_client is None:
+        # XTTS-v2 is released under Coqui's non-commercial Public Model
+        # License; loading it prompts for interactive agreement unless this
+        # is set. Setting it here (rather than requiring it in the
+        # environment) keeps the feature a one-line opt-in via
+        # VOICE_CLONE_REFERENCE alone.
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")
+        try:
+            import torchaudio
+            from TTS.api import TTS as CoquiTTS
+        except ImportError as exc:
+            raise LLMError(
+                "Local voice cloning isn't installed — run "
+                "`pip install -r requirements-voice-clone.txt` first."
+            ) from exc
+
+        # torchaudio>=2.9 routes torchaudio.load() through TorchCodec, which
+        # needs FFmpeg's actual shared libraries installed on the system (not
+        # just the torchcodec Python package) — absent here, and not
+        # something to install unilaterally (a native binary from outside
+        # the Python package index). XTTS internally calls torchaudio.load()
+        # to read the reference voice sample, so patch it to use `soundfile`
+        # instead: same PCM decoding, already a hard dependency of
+        # coqui-tts, verified to read both wav and mp3 without FFmpeg.
+        def _load_audio_via_soundfile(path, *args, **kwargs):
+            import soundfile as sf
+            import torch
+
+            data, sr = sf.read(path, dtype="float32", always_2d=True)
+            return torch.from_numpy(data.T), sr
+
+        torchaudio.load = _load_audio_via_soundfile
+
+        try:
+            _clone_tts_client = CoquiTTS("tts_models/multilingual/multi-dataset/xtts_v2")
+        except Exception as exc:
+            raise LLMError(f"Failed to load the voice-clone model: {exc}") from exc
+
+    try:
+        # Coqui's TTS object isn't documented as thread-safe for concurrent
+        # .tts() calls on one instance; this app is single-user, but the
+        # lock keeps back-to-back sentence requests from racing.
+        with _clone_tts_lock:
+            samples = _clone_tts_client.tts(
+                text=text,
+                speaker_wav=settings.voice_clone_reference,
+                language=settings.voice_clone_language,
+            )
+    except Exception as exc:
+        raise LLMError(f"Voice cloning failed: {exc}") from exc
+
+    import io
+
+    import soundfile as sf
+
+    buffer = io.BytesIO()
+    sf.write(buffer, samples, samplerate=24000, format="WAV")
+    return buffer.getvalue()

@@ -73,7 +73,19 @@ class Settings:
     groq_tts_model: str = field(
         default_factory=lambda: os.getenv("GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english")
     )
-    groq_tts_voice: str = field(default_factory=lambda: os.getenv("GROQ_TTS_VOICE", "troy"))
+    # Female English voices: hannah, autumn, diana. Male: troy, austin, daniel.
+    groq_tts_voice: str = field(default_factory=lambda: os.getenv("GROQ_TTS_VOICE", "hannah"))
+    # Optional local voice cloning (Coqui XTTS-v2) — when set, voice mode
+    # speaks in this specific cloned voice instead of a Groq preset. Path to
+    # a short (6s+) reference audio sample. Free (no API), but only works on
+    # a machine with requirements-voice-clone.txt installed; leave unset on
+    # Render (or any low-memory host) and it silently uses Groq instead.
+    voice_clone_reference: str = field(
+        default_factory=lambda: os.getenv("VOICE_CLONE_REFERENCE", "")
+    )
+    voice_clone_language: str = field(
+        default_factory=lambda: os.getenv("VOICE_CLONE_LANGUAGE", "en")
+    )
     # How long Ollama keeps a model resident in memory after a request, so
     # back-to-back messages don't each pay a full reload-from-disk cost.
     ollama_keep_alive: str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m"))

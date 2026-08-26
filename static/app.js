@@ -627,16 +627,44 @@ function speakUtterance(utterance) {
   updateStopButtonVisibility();
 }
 
+// Picks a female-sounding system voice for the browser TTS fallback, so it
+// stays consistent with the server-side voice (Hannah, Orpheus) rather than
+// whatever the browser's platform default happens to be (often male).
+// Matched by name since the Web Speech API exposes no gender field.
+const FEMALE_VOICE_NAME = /female|zira|aria|jenny|samantha|susan|victoria|karen|moira|tessa|fiona|kate|serena|allison|ava|hazel|salli|joanna|kendra|kimberly|ivy/i;
+function pickFemaleBrowserVoice(lang) {
+  const synth = window.speechSynthesis;
+  if (!synth) return null;
+  const voices = synth.getVoices();
+  const inLang = voices.filter((v) => v.lang?.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+  const pool = inLang.length ? inLang : voices;
+  return pool.find((v) => FEMALE_VOICE_NAME.test(v.name)) || null;
+}
+
 // Fallback voice — the browser's own built-in (robotic-sounding) TTS.
 // Used only when server-side synthesis (below) isn't available or fails,
-// so voice mode never goes completely silent.
+// so voice mode never goes completely silent. Returns a promise that
+// resolves only once the utterance actually finishes (or errors) — callers
+// chain sentences through this, so if it resolved immediately instead, the
+// next (server-side, human-voiced) sentence would start playing on top of
+// this one still talking, producing two overlapping voices.
 function speakWithBrowserVoice(text) {
-  if (!window.speechSynthesis || !text) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = navigator.language || "en-US";
-  speakUtterance(utterance);
-  window.speechSynthesis.resume();
-  ensureTtsResumeGuard();
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis || !text) {
+      resolve();
+      return;
+    }
+    const lang = navigator.language || "en-US";
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang;
+    const femaleVoice = pickFemaleBrowserVoice(lang);
+    if (femaleVoice) utterance.voice = femaleVoice;
+    utterance.addEventListener("end", resolve);
+    utterance.addEventListener("error", resolve);
+    speakUtterance(utterance);
+    window.speechSynthesis.resume();
+    ensureTtsResumeGuard();
+  });
 }
 
 // ---- Server-side TTS (Groq PlayAI) — a natural, human-sounding voice
@@ -648,6 +676,20 @@ ttsAudioEl.preload = "auto";
 // one is a separate async network request; chaining onto this promise
 // serializes playback without blocking token streaming.
 let ttsQueue = Promise.resolve();
+
+// One token per sentence currently queued/synthesizing/playing — the stop
+// button should be visible for the whole span from "asked for" to "done
+// speaking", not just while audio happens to be playing (a slow or stuck
+// TTS request, e.g. local voice cloning, could otherwise leave the user
+// with no way to cancel for a long time). A Set of tokens (rather than a
+// plain counter) so a late-arriving decrement from a request that
+// stopSpeaking() already cleared can't wrongly cancel a later turn's count.
+const pendingSpeechTokens = new Set();
+
+// Aborts the one in-flight /api/speak request (ttsQueue serializes them, so
+// there's ever at most one) so Stop actually cancels the wait instead of
+// just muting whatever eventually arrives.
+let currentSpeakAbortController = null;
 
 function playServerAudio(blob) {
   return new Promise((resolve) => {
@@ -669,18 +711,26 @@ function playServerAudio(blob) {
 }
 
 async function speakServerSide(text) {
+  const controller = new AbortController();
+  currentSpeakAbortController = controller;
   try {
     const response = await fetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      signal: controller.signal,
     });
     if (!response.ok) throw new Error("tts request failed");
     await playServerAudio(await response.blob());
   } catch (err) {
+    // Deliberately cancelled via the Stop button — don't fall back to the
+    // browser voice for text the user just asked to stop hearing.
+    if (err.name === "AbortError") return;
     // Server TTS isn't configured (e.g. no GROQ_API_KEY locally) or the
-    // request failed — fall back rather than going silent.
-    speakWithBrowserVoice(text);
+    // request failed — fall back rather than going silent. Must be awaited
+    // (see speakWithBrowserVoice) so the next sentence's server-side audio
+    // doesn't start until this one has actually finished speaking.
+    await speakWithBrowserVoice(text);
   }
 }
 
@@ -705,19 +755,26 @@ function unlockSpeechSynthesisOnce() {
   ttsAudioEl.muted = false;
 }
 
-// Shows the explicit Stop button only while a reply is actually audible,
-// so it doesn't clutter the panel the rest of the time.
+// Shows the explicit Stop button for the whole span from "a sentence was
+// queued to speak" through "done playing" — not just while audio happens
+// to be actively playing. A slow TTS request (e.g. local voice cloning
+// under load) can take a long time to even start playing; without a way to
+// cancel during that wait, the user is stuck listening for however long
+// synthesis takes with no escape.
 function updateStopButtonVisibility() {
-  const synth = window.speechSynthesis;
-  const speaking = (synth && (synth.speaking || synth.pending)) || !ttsAudioEl.paused;
-  voiceStopBtn.hidden = !speaking;
+  voiceStopBtn.hidden = pendingSpeechTokens.size === 0;
 }
 
 function stopSpeaking() {
+  if (currentSpeakAbortController) {
+    currentSpeakAbortController.abort();
+    currentSpeakAbortController = null;
+  }
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   ttsAudioEl.pause();
   ttsAudioEl.currentTime = 0;
   ttsQueue = Promise.resolve(); // drop any of the previous reply's still-queued sentences
+  pendingSpeechTokens.clear();
   updateStopButtonVisibility();
 }
 
@@ -729,7 +786,13 @@ voiceStopBtn.addEventListener("click", stopSpeaking);
 // replies feel very slow: no sound at all until generation had finished).
 function enqueueSpeech(text) {
   if (ttsMuted || !text) return;
-  ttsQueue = ttsQueue.then(() => speakServerSide(text));
+  const token = Symbol("speech");
+  pendingSpeechTokens.add(token);
+  updateStopButtonVisibility();
+  ttsQueue = ttsQueue.then(() => speakServerSide(text)).finally(() => {
+    pendingSpeechTokens.delete(token);
+    updateStopButtonVisibility();
+  });
 }
 
 // Matches a sentence boundary once trailing whitespace/newlines follow it,
