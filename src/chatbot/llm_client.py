@@ -6,6 +6,8 @@ and the small per-model quirks (e.g. `effort` isn't accepted on Haiku).
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Iterator
 
 import anthropic
@@ -378,3 +380,48 @@ def build_llm_client() -> ClaudeClient | OllamaClient | GroqClient:
     raise LLMError(
         f"Unknown LLM_PROVIDER: {settings.llm_provider!r} (expected 'claude', 'ollama', or 'groq')"
     )
+
+
+_tts_client: groq.Groq | None = None
+
+
+def synthesize_speech(text: str) -> bytes:
+    """Return MP3 audio bytes for `text`, spoken by Groq's PlayAI TTS voice.
+
+    Independent of LLM_PROVIDER: voice mode's spoken replies use this
+    whenever GROQ_API_KEY is set, even when chat itself is served by Claude
+    or Ollama, since PlayAI is a real, natural-sounding voice — unlike any
+    browser's built-in TTS, which is what this falls back to on failure.
+    """
+    global _tts_client
+    if _tts_client is None:
+        try:
+            # Zero-arg client resolves GROQ_API_KEY from the environment.
+            _tts_client = groq.Groq()
+        except Exception as exc:  # pragma: no cover - defensive
+            raise LLMError(f"Failed to initialize Groq TTS client: {exc}") from exc
+
+    try:
+        response = _tts_client.audio.speech.create(
+            model=settings.groq_tts_model,
+            voice=settings.groq_tts_voice,
+            input=text,
+            response_format="mp3",
+        )
+    except groq.APIStatusError as exc:
+        raise LLMError(f"Groq TTS error ({exc.status_code}): {exc.message}") from exc
+    except groq.APIConnectionError as exc:
+        raise LLMError(f"Network error contacting Groq TTS: {exc}") from exc
+    except Exception as exc:
+        raise LLMError(f"Could not synthesize speech via Groq: {exc}") from exc
+
+    # The SDK's response object only exposes write_to_file(path), not raw
+    # bytes directly, so round-trip through a temp file.
+    fd, tmp_path = tempfile.mkstemp(suffix=".mp3")
+    os.close(fd)
+    try:
+        response.write_to_file(tmp_path)
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(tmp_path)

@@ -63,6 +63,14 @@ class Settings:
     groq_vision_model: str = field(
         default_factory=lambda: os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
     )
+    # Text-to-speech for voice mode — independent of LLM_PROVIDER (works even
+    # when chat itself is served by Claude or Ollama) since Groq's PlayAI
+    # voice sounds like a real person, unlike any browser's built-in TTS.
+    # Full voice list: https://console.groq.com/docs/text-to-speech
+    groq_tts_model: str = field(default_factory=lambda: os.getenv("GROQ_TTS_MODEL", "playai-tts"))
+    groq_tts_voice: str = field(
+        default_factory=lambda: os.getenv("GROQ_TTS_VOICE", "Fritz-PlayAI")
+    )
     # How long Ollama keeps a model resident in memory after a request, so
     # back-to-back messages don't each pay a full reload-from-disk cost.
     ollama_keep_alive: str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m"))

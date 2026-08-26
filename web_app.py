@@ -25,7 +25,13 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 from werkzeug.utils import secure_filename  # noqa: E402
 
 from chatbot.config import settings  # noqa: E402
-from chatbot.llm_client import ClaudeClient, LLMError, OllamaClient, build_llm_client  # noqa: E402
+from chatbot.llm_client import (  # noqa: E402
+    ClaudeClient,
+    LLMError,
+    OllamaClient,
+    build_llm_client,
+    synthesize_speech,
+)
 from chatbot.memory import ConversationMemory  # noqa: E402
 from chatbot.rag import Retriever  # noqa: E402
 
@@ -294,6 +300,23 @@ def upload_doc():
             "added to the knowledge base."
         )
     return jsonify(response)
+
+
+@app.route("/api/speak", methods=["POST"])
+def speak():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "No text provided."}), 400
+    # Called once per sentence, so real requests are always short — this
+    # just bounds worst-case cost/latency against a malformed/abusive one.
+    text = text[:2000]
+
+    try:
+        audio_bytes = synthesize_speech(text)
+    except LLMError as exc:
+        return jsonify({"error": str(exc)}), 503
+    return Response(audio_bytes, mimetype="audio/mpeg")
 
 
 @app.route("/api/ingest", methods=["POST"])

@@ -546,6 +546,21 @@ function stopListening() {
   voiceMicBtn.classList.remove("active");
 }
 
+// Backgrounding the tab/app (switching apps, locking the screen) doesn't
+// change which in-page view is showing, so showView()'s own cleanup never
+// runs — without this, the mic stays hot and listening in the background
+// until the whole app is force-killed. visibilitychange covers switching
+// apps or locking the screen; pagehide covers navigating away entirely.
+// Both are cheap to call when nothing is actually active.
+function stopVoiceForBackground() {
+  if (recognitionActive) stopListening();
+  stopSpeaking();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopVoiceForBackground();
+});
+window.addEventListener("pagehide", stopVoiceForBackground);
+
 voiceMicBtn.addEventListener("click", () => {
   // Must run synchronously inside this click handler — see
   // unlockSpeechSynthesisOnce()'s comment for why.
@@ -561,9 +576,7 @@ voiceMuteBtn.addEventListener("click", () => {
   ttsMuted = !ttsMuted;
   voiceMuteBtn.textContent = ttsMuted ? "🔇" : "🔊";
   voiceMuteBtn.title = ttsMuted ? "Spoken replies are off" : "Toggle spoken replies";
-  if (ttsMuted && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
+  if (ttsMuted) stopSpeaking();
 });
 
 // Chrome bug: calling speechSynthesis.cancel() (done below, at the start of
@@ -601,32 +614,96 @@ function speakUtterance(utterance) {
   window.speechSynthesis.speak(utterance);
 }
 
-// iOS Safari only allows speechSynthesis.speak() to produce audio when it's
-// called directly inside a user-gesture handler (a click/tap) — every real
-// reply is spoken from deep inside an async chain (mic tap -> speech
-// recognition -> fetch -> streamed tokens), well past the original gesture,
-// so Safari silently refuses. Speaking one throwaway utterance synchronously
-// on the very first mic tap "unlocks" audio for the rest of the page
-// session, so every later async speak() call actually plays. Desktop
-// Chrome doesn't need this, but it's a harmless no-op there.
-let speechUnlocked = false;
-function unlockSpeechSynthesisOnce() {
-  if (speechUnlocked || !window.speechSynthesis) return;
-  speechUnlocked = true;
-  speakUtterance(new SpeechSynthesisUtterance(" "));
-}
-
-// Queues one utterance without interrupting what's already speaking — used
-// to speak a reply sentence-by-sentence as it streams in, rather than
-// waiting for the whole answer (which is what made voice replies feel very
-// slow: no sound at all until generation had fully finished).
-function enqueueSpeech(text) {
-  if (ttsMuted || !window.speechSynthesis || !text) return;
+// Fallback voice — the browser's own built-in (robotic-sounding) TTS.
+// Used only when server-side synthesis (below) isn't available or fails,
+// so voice mode never goes completely silent.
+function speakWithBrowserVoice(text) {
+  if (!window.speechSynthesis || !text) return;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = navigator.language || "en-US";
   speakUtterance(utterance);
   window.speechSynthesis.resume();
   ensureTtsResumeGuard();
+}
+
+// ---- Server-side TTS (Groq PlayAI) — a natural, human-sounding voice
+// instead of the browser's built-in one. ----
+const ttsAudioEl = new Audio();
+ttsAudioEl.preload = "auto";
+
+// Sentences are spoken in the order they were generated even though each
+// one is a separate async network request; chaining onto this promise
+// serializes playback without blocking token streaming.
+let ttsQueue = Promise.resolve();
+
+function playServerAudio(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      ttsAudioEl.removeEventListener("ended", cleanup);
+      ttsAudioEl.removeEventListener("error", cleanup);
+      resolve();
+    };
+    ttsAudioEl.addEventListener("ended", cleanup);
+    ttsAudioEl.addEventListener("error", cleanup);
+    ttsAudioEl.src = url;
+    const playPromise = ttsAudioEl.play();
+    if (playPromise && playPromise.catch) playPromise.catch(cleanup);
+  });
+}
+
+async function speakServerSide(text) {
+  try {
+    const response = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error("tts request failed");
+    await playServerAudio(await response.blob());
+  } catch (err) {
+    // Server TTS isn't configured (e.g. no GROQ_API_KEY locally) or the
+    // request failed — fall back rather than going silent.
+    speakWithBrowserVoice(text);
+  }
+}
+
+// iOS Safari gates both speechSynthesis and <audio>.play() the same way:
+// a play() call must originate from inside a user-gesture handler at
+// least once per page session before later *async* play() calls (ones
+// triggered from a fetch response, not a tap) are allowed to produce
+// sound. Playing (and immediately stopping) something inaudible here,
+// synchronously on the first mic tap, unlocks both for the rest of the
+// session. Desktop Chrome doesn't need this, but it's a harmless no-op
+// there.
+let speechUnlocked = false;
+function unlockSpeechSynthesisOnce() {
+  if (speechUnlocked) return;
+  speechUnlocked = true;
+  if (window.speechSynthesis) speakUtterance(new SpeechSynthesisUtterance(" "));
+  ttsAudioEl.muted = true;
+  const p = ttsAudioEl.play();
+  if (p && p.catch) p.catch(() => {});
+  ttsAudioEl.pause();
+  ttsAudioEl.currentTime = 0;
+  ttsAudioEl.muted = false;
+}
+
+function stopSpeaking() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  ttsAudioEl.pause();
+  ttsAudioEl.currentTime = 0;
+  ttsQueue = Promise.resolve(); // drop any of the previous reply's still-queued sentences
+}
+
+// Queues one sentence to be spoken without interrupting what's already
+// playing — used to speak a reply sentence-by-sentence as it streams in,
+// rather than waiting for the whole answer (which is what made voice
+// replies feel very slow: no sound at all until generation had finished).
+function enqueueSpeech(text) {
+  if (ttsMuted || !text) return;
+  ttsQueue = ttsQueue.then(() => speakServerSide(text));
 }
 
 // Matches a sentence boundary once trailing whitespace/newlines follow it,
@@ -639,7 +716,7 @@ async function handleVoiceFinalTranscript(text) {
   voiceStatus.textContent = "Thinking…";
   voiceMicBtn.disabled = true;
   voiceTranscript.textContent = `You: ${text}`;
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  stopSpeaking();
 
   let spokenUpTo = 0;
   const onToken = (_chunk, fullText) => {
