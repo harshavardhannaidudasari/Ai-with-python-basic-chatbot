@@ -474,14 +474,18 @@ if (window.speechSynthesis) {
   window.speechSynthesis.getVoices();
 }
 
-function getRecognition() {
-  if (recognition) return recognition;
-  recognition = new SpeechRecognitionCtor();
-  recognition.lang = navigator.language || "en-US";
-  recognition.continuous = false;
-  recognition.interimResults = true;
+// A fresh SpeechRecognition instance every time, rather than one cached
+// singleton reused across turns — reusing a single instance's start/stop
+// cycle is flaky across browsers (confirmed live: the first voice question
+// in a session worked fine, but every question after it just sat in
+// "Listening…" forever with no result, on both desktop and mobile).
+function createRecognition() {
+  const rec = new SpeechRecognitionCtor();
+  rec.lang = navigator.language || "en-US";
+  rec.continuous = false;
+  rec.interimResults = true;
 
-  recognition.onresult = (event) => {
+  rec.onresult = (event) => {
     let interim = "";
     let final = "";
     for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -499,7 +503,7 @@ function getRecognition() {
     }
   };
 
-  recognition.onerror = (event) => {
+  rec.onerror = (event) => {
     recognitionActive = false;
     voiceWave.classList.remove("listening");
     voiceMicBtn.classList.remove("active");
@@ -512,21 +516,21 @@ function getRecognition() {
     }
   };
 
-  recognition.onend = () => {
+  rec.onend = () => {
     recognitionActive = false;
     voiceWave.classList.remove("listening");
     voiceMicBtn.classList.remove("active");
     if (!voiceBusy) voiceStatus.textContent = "Tap the mic to talk";
   };
 
-  return recognition;
+  return rec;
 }
 
 function startListening() {
   if (!speechSupported || voiceBusy) return;
-  const rec = getRecognition();
+  recognition = createRecognition();
   try {
-    rec.start();
+    recognition.start();
   } catch (err) {
     return; // already running
   }
