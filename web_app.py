@@ -316,7 +316,7 @@ def speak():
         audio_bytes = synthesize_speech(text)
     except LLMError as exc:
         return jsonify({"error": str(exc)}), 503
-    return Response(audio_bytes, mimetype="audio/mpeg")
+    return Response(audio_bytes, mimetype="audio/wav")
 
 
 @app.route("/api/ingest", methods=["POST"])

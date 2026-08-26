@@ -386,11 +386,11 @@ _tts_client: groq.Groq | None = None
 
 
 def synthesize_speech(text: str) -> bytes:
-    """Return MP3 audio bytes for `text`, spoken by Groq's PlayAI TTS voice.
+    """Return WAV audio bytes for `text`, spoken by Groq's Orpheus TTS voice.
 
     Independent of LLM_PROVIDER: voice mode's spoken replies use this
     whenever GROQ_API_KEY is set, even when chat itself is served by Claude
-    or Ollama, since PlayAI is a real, natural-sounding voice — unlike any
+    or Ollama, since Orpheus is a real, natural-sounding voice — unlike any
     browser's built-in TTS, which is what this falls back to on failure.
     """
     global _tts_client
@@ -406,7 +406,10 @@ def synthesize_speech(text: str) -> bytes:
             model=settings.groq_tts_model,
             voice=settings.groq_tts_voice,
             input=text,
-            response_format="mp3",
+            # Orpheus only accepts "wav" — other Groq TTS models accept more
+            # formats (flac/mp3/mulaw/ogg/wav), but this app is pinned to
+            # Orpheus specifically, so keep it simple rather than probing.
+            response_format="wav",
         )
     except groq.APIStatusError as exc:
         raise LLMError(f"Groq TTS error ({exc.status_code}): {exc.message}") from exc
@@ -417,7 +420,7 @@ def synthesize_speech(text: str) -> bytes:
 
     # The SDK's response object only exposes write_to_file(path), not raw
     # bytes directly, so round-trip through a temp file.
-    fd, tmp_path = tempfile.mkstemp(suffix=".mp3")
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
         response.write_to_file(tmp_path)
