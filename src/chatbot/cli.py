@@ -21,7 +21,7 @@ Commands:
 
 def _print_banner(rag_enabled: bool, rag_ready: bool) -> None:
     print("=" * 60)
-    print(" OrbitPro  (RAG-enabled)")
+    print(" OrbitProAI  (RAG-enabled)")
     print("=" * 60)
     if settings.llm_provider.strip().lower() == "ollama":
         print(f" Provider: Ollama ({settings.ollama_host})  |  Model: {settings.ollama_model}")
@@ -106,7 +106,7 @@ def run() -> None:
 
         memory.add("user", user_input)
 
-        print("OrbitPro: ", end="", flush=True)
+        print("OrbitProAI: ", end="", flush=True)
         reply_parts: list[str] = []
         try:
             for chunk in client.stream_reply(memory.as_list(), context_chunks):

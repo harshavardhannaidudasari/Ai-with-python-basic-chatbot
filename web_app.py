@@ -301,7 +301,10 @@ def reset():
 if __name__ == "__main__":
     debug_mode = os.getenv("FLASK_DEBUG", "false").lower() in {"1", "true", "yes"}
     host = os.getenv("FLASK_HOST", "127.0.0.1")
-    port = int(os.getenv("FLASK_PORT", "5000"))
+    # Render (and most PaaS hosts) assign the listen port via $PORT at runtime
+    # rather than letting it be fixed in config, so it takes priority over
+    # FLASK_PORT when present.
+    port = int(os.getenv("PORT") or os.getenv("FLASK_PORT", "5000"))
 
     if not AUTH_USERNAME or not AUTH_PASSWORD:
         print(

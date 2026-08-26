@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>OrbitPro</title>
+  <title>OrbitProAI</title>
   <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}" />
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='images/favicon-180.png') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
@@ -12,9 +12,9 @@
   <div class="app">
     <header class="header">
       <div class="brand">
-        <img class="brand-logo" src="{{ url_for('static', filename='images/favicon-180.png') }}" alt="OrbitPro logo" />
+        <img class="brand-logo" src="{{ url_for('static', filename='images/favicon-180.png') }}" alt="OrbitProAI logo" />
         <div class="brand-text">
-          <h1>Orbit<span class="brand-accent">Pro</span></h1>
+          <h1>Orbit<span class="brand-accent">ProAI</span></h1>
           <p class="tagline">Intelligence in Motion</p>
           <p class="subtitle">Model: <code>{{ model }}</code> &middot; RAG-enabled</p>
         </div>
@@ -70,13 +70,13 @@
         </svg>
       </div>
 
-      <h2 class="hero-heading">Meet <span class="brand-accent">OrbitPro</span>!</h2>
+      <h2 class="hero-heading">Meet <span class="brand-accent">OrbitProAI</span>!</h2>
 
       <div class="hero-bubble">Need our help now?</div>
 
       <div class="hero-actions">
-        <button type="button" id="hero-chat-btn" class="hero-btn hero-btn-primary">💬 Chat with OrbitPro</button>
-        <button type="button" id="hero-voice-btn" class="hero-btn hero-btn-secondary">🎙️ Talk with OrbitPro</button>
+        <button type="button" id="hero-chat-btn" class="hero-btn hero-btn-primary">💬 Chat with OrbitProAI</button>
+        <button type="button" id="hero-voice-btn" class="hero-btn hero-btn-secondary">🎙️ Talk with OrbitProAI</button>
       </div>
     </div>
 
@@ -93,7 +93,7 @@
         <div class="message bot">
           <div class="message-col">
             <div class="bubble">
-              Hi! I'm OrbitPro, an AI assistant with retrieval-augmented answers.
+              Hi! I'm OrbitProAI, an AI assistant with retrieval-augmented answers.
               {% if rag_ready %}
                 The knowledge base is loaded — ask me anything about the documents in <code>data/docs/</code>.
               {% else %}

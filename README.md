@@ -1,4 +1,4 @@
-# OrbitPro
+# OrbitProAI
 
 *Intelligence in Motion*
 
@@ -134,6 +134,42 @@ pytest
 
 Tests cover the chunker, vector store, and conversation memory — no API key
 or network access needed.
+
+## Deploying to Render (stable URL)
+
+`scripts/go_live.ps1` gives you a quick public URL via a Cloudflare tunnel,
+but that address changes every time the tunnel restarts. For a URL that
+stays fixed, deploy the web UI to [Render](https://render.com) — free tier,
+no domain required.
+
+1. Push this repo to GitHub (if you haven't already).
+2. In the Render dashboard: **New > Blueprint**, connect the repo. Render
+   reads `render.yaml` at the project root and configures the service
+   automatically.
+3. When prompted, set these environment variables (marked `sync: false` in
+   `render.yaml` so Render asks for them instead of storing them in the
+   blueprint):
+   - `ANTHROPIC_API_KEY` — required, from
+     [console.anthropic.com](https://console.anthropic.com/settings/keys)
+   - `AUTH_USERNAME` / `AUTH_PASSWORD` — required once the app is public;
+     without these the web UI has no login
+4. Deploy. Your stable URL is `https://orbitproai.onrender.com` (or
+   `orbitproai-<suffix>.onrender.com` if that name is taken — Render shows
+   the final URL after the first deploy).
+
+Notes:
+
+- The free plan spins the service down after 15 minutes of inactivity;
+  the next request wakes it up, which can take a minute (slower than the
+  local Ollama cold-start case `web_app.py`'s warm-up thread already
+  handles — that thread only pays off once the process is already running).
+- The free plan's disk is ephemeral: anything ingested into
+  `data/docs/` / `data/index/` after deploy is lost on the next deploy or
+  restart. Commit any knowledge-base files you want to ship as part of the
+  repo (see `data/docs/about_this_project.md` for an example) rather than
+  uploading them through the UI.
+- `LLM_PROVIDER=ollama` won't work on Render — there's no Ollama server to
+  point at. The blueprint defaults to `LLM_PROVIDER=claude`.
 
 ## Configuration
 

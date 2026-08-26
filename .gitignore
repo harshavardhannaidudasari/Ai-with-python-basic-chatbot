@@ -14,3 +14,7 @@ data/docs/*
 .DS_Store
 .idea/
 .ai/
+n8n/data/
+scripts/tools/
+scripts/current_live_url.txt
+scripts/go_live_last_run.log

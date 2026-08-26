@@ -1,4 +1,4 @@
-name: Deploy OrbitPro
+name: Deploy OrbitProAI
 
 on:
   push:
