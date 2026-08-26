@@ -22,6 +22,7 @@ const voiceWave = document.getElementById("voice-wave");
 const voiceStatus = document.getElementById("voice-status");
 const voiceTranscript = document.getElementById("voice-transcript");
 const voiceMuteBtn = document.getElementById("voice-mute-btn");
+const voiceStopBtn = document.getElementById("voice-stop-btn");
 const voiceMicBtn = document.getElementById("voice-mic-btn");
 
 let pendingImage = null; // data URL of the currently attached image, if any
@@ -572,6 +573,10 @@ voiceMicBtn.addEventListener("click", () => {
   if (recognitionActive) {
     stopListening();
   } else {
+    // Tapping the mic while a reply is still being spoken is the natural
+    // "interrupt" gesture — cut it off immediately rather than letting it
+    // talk over (or get recorded into) the next question.
+    stopSpeaking();
     startListening();
   }
 });
@@ -612,10 +617,14 @@ const pendingUtterances = new Set();
 
 function speakUtterance(utterance) {
   pendingUtterances.add(utterance);
-  const release = () => pendingUtterances.delete(utterance);
+  const release = () => {
+    pendingUtterances.delete(utterance);
+    updateStopButtonVisibility();
+  };
   utterance.addEventListener("end", release);
   utterance.addEventListener("error", release);
   window.speechSynthesis.speak(utterance);
+  updateStopButtonVisibility();
 }
 
 // Fallback voice — the browser's own built-in (robotic-sounding) TTS.
@@ -647,6 +656,7 @@ function playServerAudio(blob) {
       URL.revokeObjectURL(url);
       ttsAudioEl.removeEventListener("ended", cleanup);
       ttsAudioEl.removeEventListener("error", cleanup);
+      updateStopButtonVisibility();
       resolve();
     };
     ttsAudioEl.addEventListener("ended", cleanup);
@@ -654,6 +664,7 @@ function playServerAudio(blob) {
     ttsAudioEl.src = url;
     const playPromise = ttsAudioEl.play();
     if (playPromise && playPromise.catch) playPromise.catch(cleanup);
+    updateStopButtonVisibility();
   });
 }
 
@@ -694,12 +705,23 @@ function unlockSpeechSynthesisOnce() {
   ttsAudioEl.muted = false;
 }
 
+// Shows the explicit Stop button only while a reply is actually audible,
+// so it doesn't clutter the panel the rest of the time.
+function updateStopButtonVisibility() {
+  const synth = window.speechSynthesis;
+  const speaking = (synth && (synth.speaking || synth.pending)) || !ttsAudioEl.paused;
+  voiceStopBtn.hidden = !speaking;
+}
+
 function stopSpeaking() {
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   ttsAudioEl.pause();
   ttsAudioEl.currentTime = 0;
   ttsQueue = Promise.resolve(); // drop any of the previous reply's still-queued sentences
+  updateStopButtonVisibility();
 }
+
+voiceStopBtn.addEventListener("click", stopSpeaking);
 
 // Queues one sentence to be spoken without interrupting what's already
 // playing — used to speak a reply sentence-by-sentence as it streams in,

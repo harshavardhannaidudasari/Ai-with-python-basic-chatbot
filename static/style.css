@@ -493,6 +493,29 @@ body::after {
   flex-shrink: 0;
 }
 
+.voice-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.voice-stop {
+  background: rgba(255, 106, 43, 0.12);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.voice-stop:hover {
+  background: rgba(255, 106, 43, 0.22);
+}
+
 .chat-area:not([hidden]) {
   display: flex;
   flex-direction: column;
@@ -864,24 +887,15 @@ code {
     gap: 6px;
     font-size: 0.78rem;
     width: 100%;
-    padding-bottom: 8px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--accent) rgba(255, 255, 255, 0.1);
-  }
-
-  .controls::-webkit-scrollbar {
-    display: block;
-    height: 5px;
-  }
-
-  .controls::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 999px;
-  }
-
-  .controls::-webkit-scrollbar-thumb {
-    background: var(--accent);
-    border-radius: 999px;
+    /* Below 600px, five-plus buttons don't fit on one line even at this
+       smaller size. The base rule scrolls them horizontally off-screen
+       with only a thin scrollbar as a hint — easy to miss entirely, which
+       made buttons past the fold seem to have vanished. Wrapping instead
+       guarantees every control stays visible without needing to discover
+       a sideways scroll. */
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
   .controls button,
@@ -977,6 +991,12 @@ code {
   .voice-mute {
     width: 40px;
     height: 40px;
+  }
+
+  .voice-stop {
+    height: 36px;
+    padding: 0 13px;
+    font-size: 0.8rem;
   }
 
   .voice-transcript {
