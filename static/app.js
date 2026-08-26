@@ -596,6 +596,13 @@ async function handleVoiceFinalTranscript(text) {
       voiceTranscript.textContent = `You: ${text}\n\n${turn.botText}`;
       const remainder = turn.botText.slice(spokenUpTo).trim();
       if (remainder) enqueueSpeech(remainder);
+    } else if (turn && turn.botBubble) {
+      // No usable reply text (request failed, connection dropped, etc.) —
+      // the bubble still holds whatever error message streamChat wrote, so
+      // surface that instead of silently going back to "Tap the mic to talk".
+      const errorText = turn.botBubble.textContent;
+      voiceTranscript.textContent = `You: ${text}\n\n${errorText}`;
+      enqueueSpeech(errorText);
     }
   } finally {
     voiceMicBtn.disabled = false;

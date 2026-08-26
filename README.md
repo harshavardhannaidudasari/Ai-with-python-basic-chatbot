@@ -198,7 +198,7 @@ All settings live in `.env` (see `.env.example` for the full list):
 | `MAX_TOKENS` | `2048` | Max response length |
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
 | `GROQ_API_KEY` | — | Your Groq API key (required when `LLM_PROVIDER=groq`) — free, from [console.groq.com/keys](https://console.groq.com/keys) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq-hosted model to use when `LLM_PROVIDER=groq` |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq-hosted model to use when `LLM_PROVIDER=groq` |
 | `OLLAMA_MODEL` | `llama3.2:1b` | Local model to use when `LLM_PROVIDER=ollama` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |

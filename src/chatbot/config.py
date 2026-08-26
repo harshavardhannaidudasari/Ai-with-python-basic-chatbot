@@ -8,7 +8,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: this project's .env must win over ambient environment
+# variables of the same name set by unrelated tools (e.g. Ollama's own server
+# is commonly configured system-wide with OLLAMA_HOST=0.0.0.0:<port> for LAN
+# binding, which is not a valid address for *this app* to connect to as a
+# client — without override, that pre-existing OS-level value silently wins
+# over .env's http://localhost:11434 and breaks every LLM call).
+load_dotenv(override=True)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,13 +50,18 @@ class Settings:
         default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "llava-phi3")
     )
     groq_api_key: str | None = field(default_factory=lambda: os.getenv("GROQ_API_KEY"))
+    # llama-3.3-70b-versatile was Groq's default here until it was
+    # decommissioned 08/16/26; openai/gpt-oss-120b is Groq's recommended
+    # replacement (see https://console.groq.com/docs/deprecations).
     groq_model: str = field(
-        default_factory=lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        default_factory=lambda: os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     )
+    # meta-llama/llama-4-scout-17b-16e-instruct was decommissioned 07/17/26;
+    # qwen/qwen3.6-27b is Groq's recommended replacement and, as of this
+    # writing, the only current Groq-hosted model that still accepts image
+    # input (see https://console.groq.com/docs/vision).
     groq_vision_model: str = field(
-        default_factory=lambda: os.getenv(
-            "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
-        )
+        default_factory=lambda: os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
     )
     # How long Ollama keeps a model resident in memory after a request, so
     # back-to-back messages don't each pay a full reload-from-disk cost.

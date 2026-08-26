@@ -190,13 +190,18 @@ def chat():
         # Rewinding history: the client is editing or retrying an earlier turn.
         memory.truncate_to_turns(truncate_to)
 
+    try:
+        llm = get_client()
+    except LLMError as exc:
+        return jsonify({"error": f"LLM is not configured correctly: {exc}"}), 500
+
     context_chunks = None
     sources: list[str] = []
     if image_data_url:
         # Image turns are single-shot: no conversation history, no RAG.
         source_mode = "image"
         media_type, image_b64 = _parse_data_url(image_data_url)
-        stream = get_client().stream_reply_with_image(message, image_b64, media_type)
+        stream = llm.stream_reply_with_image(message, image_b64, media_type)
     else:
         if use_rag and retriever.is_ready():
             try:
@@ -209,7 +214,7 @@ def chat():
         else:
             source_mode = "no_rag"
         memory.add("user", message)
-        stream = get_client().stream_reply(memory.as_list(), context_chunks)
+        stream = llm.stream_reply(memory.as_list(), context_chunks)
 
     def generate():
         reply_parts: list[str] = []

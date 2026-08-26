@@ -1,0 +1,17 @@
+name: Keep Render service awake
+
+# Render's free plan spins the service down after 15 minutes of no HTTP
+# traffic; the next visitor then has to wait through a cold start (up to
+# ~60s) before the app responds. Pinging the health-check endpoint on a
+# schedule keeps traffic flowing so it never idles long enough to sleep.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health check endpoint
+        run: curl -fsS --max-time 30 https://orbitproai.onrender.com/login -o /dev/null
