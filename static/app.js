@@ -547,6 +547,9 @@ function stopListening() {
 }
 
 voiceMicBtn.addEventListener("click", () => {
+  // Must run synchronously inside this click handler — see
+  // unlockSpeechSynthesisOnce()'s comment for why.
+  unlockSpeechSynthesisOnce();
   if (recognitionActive) {
     stopListening();
   } else {
@@ -585,6 +588,34 @@ function ensureTtsResumeGuard() {
   }, 4000);
 }
 
+// Safari has a bug where a SpeechSynthesisUtterance with no other
+// reference can be garbage-collected mid-speech, killing the audio
+// silently. Holding it here for as long as it's in flight prevents that.
+const pendingUtterances = new Set();
+
+function speakUtterance(utterance) {
+  pendingUtterances.add(utterance);
+  const release = () => pendingUtterances.delete(utterance);
+  utterance.addEventListener("end", release);
+  utterance.addEventListener("error", release);
+  window.speechSynthesis.speak(utterance);
+}
+
+// iOS Safari only allows speechSynthesis.speak() to produce audio when it's
+// called directly inside a user-gesture handler (a click/tap) — every real
+// reply is spoken from deep inside an async chain (mic tap -> speech
+// recognition -> fetch -> streamed tokens), well past the original gesture,
+// so Safari silently refuses. Speaking one throwaway utterance synchronously
+// on the very first mic tap "unlocks" audio for the rest of the page
+// session, so every later async speak() call actually plays. Desktop
+// Chrome doesn't need this, but it's a harmless no-op there.
+let speechUnlocked = false;
+function unlockSpeechSynthesisOnce() {
+  if (speechUnlocked || !window.speechSynthesis) return;
+  speechUnlocked = true;
+  speakUtterance(new SpeechSynthesisUtterance(" "));
+}
+
 // Queues one utterance without interrupting what's already speaking — used
 // to speak a reply sentence-by-sentence as it streams in, rather than
 // waiting for the whole answer (which is what made voice replies feel very
@@ -593,7 +624,7 @@ function enqueueSpeech(text) {
   if (ttsMuted || !window.speechSynthesis || !text) return;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = navigator.language || "en-US";
-  window.speechSynthesis.speak(utterance);
+  speakUtterance(utterance);
   window.speechSynthesis.resume();
   ensureTtsResumeGuard();
 }
