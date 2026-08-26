@@ -28,18 +28,24 @@ def _supports_effort(model: str) -> bool:
 
 
 def _groq_reasoning_kwargs(model: str) -> dict:
-    """Suppress visible chain-of-thought on Groq's reasoning-capable models.
+    """Suppress chain-of-thought on Groq's reasoning-capable models.
 
     Without this, a reasoning model (e.g. qwen/qwen3.6-27b) streams a raw
     `<think>...</think>` block as ordinary content: it leaks internal
     reasoning into the chat UI, and on a bounded max_tokens budget can
     consume the whole budget before the actual answer is ever generated
-    (observed: image analysis returning nothing but an unfinished chain of
-    thought). The two model families use mutually exclusive parameters for
-    this — see https://console.groq.com/docs/reasoning.
+    (observed live: image analysis returning nothing but an unfinished
+    chain of thought, cut off mid-sentence).
+    `reasoning_format="hidden"` alone isn't enough — the model still spends
+    tokens reasoning, just doesn't show it, so it can still exhaust the
+    budget with no visible answer left. `reasoning_effort="none"` actually
+    turns reasoning off for the qwen3 family, so no budget is spent on it
+    at all. gpt-oss doesn't support disabling reasoning, only hiding it,
+    so it uses `include_reasoning` instead — see
+    https://console.groq.com/docs/reasoning.
     """
     if "qwen" in model:
-        return {"reasoning_format": "hidden"}
+        return {"reasoning_effort": "none"}
     if "gpt-oss" in model:
         return {"include_reasoning": False}
     return {}
