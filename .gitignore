@@ -14,6 +14,7 @@ data/docs/*
 .DS_Store
 .idea/
 .ai/
+*.iml
 n8n/data/
 scripts/tools/
 scripts/current_live_url.txt
