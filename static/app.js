@@ -467,6 +467,13 @@ if (!speechSupported) {
   voiceStatus.textContent = "Voice input isn't supported in this browser — try Chrome or Edge.";
 }
 
+// Chrome loads its voice list asynchronously and the very first speak()
+// call can be silently dropped while it's still empty. Poking getVoices()
+// up front kicks that loading off well before the first reply needs it.
+if (window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+}
+
 function getRecognition() {
   if (recognition) return recognition;
   recognition = new SpeechRecognitionCtor();
@@ -556,6 +563,28 @@ voiceMuteBtn.addEventListener("click", () => {
   }
 });
 
+// Chrome bug: calling speechSynthesis.cancel() (done below, at the start of
+// every voice turn, to stop the previous reply's speech) can leave the
+// engine stuck in a "paused" state where speak() silently queues audio that
+// never actually plays — text shows up but nothing is heard. resume() is a
+// harmless no-op when it's already speaking, and unsticks it when it isn't.
+// A second, unrelated Chrome bug auto-pauses long utterances (~15s+) mid-
+// sentence; nudging resume() on an interval while speech is pending/active
+// works around that too.
+let ttsResumeTimer = null;
+function ensureTtsResumeGuard() {
+  const synth = window.speechSynthesis;
+  if (ttsResumeTimer || !synth) return;
+  ttsResumeTimer = setInterval(() => {
+    if (!synth.speaking && !synth.pending) {
+      clearInterval(ttsResumeTimer);
+      ttsResumeTimer = null;
+      return;
+    }
+    synth.resume();
+  }, 4000);
+}
+
 // Queues one utterance without interrupting what's already speaking — used
 // to speak a reply sentence-by-sentence as it streams in, rather than
 // waiting for the whole answer (which is what made voice replies feel very
@@ -565,6 +594,8 @@ function enqueueSpeech(text) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = navigator.language || "en-US";
   window.speechSynthesis.speak(utterance);
+  window.speechSynthesis.resume();
+  ensureTtsResumeGuard();
 }
 
 // Matches a sentence boundary once trailing whitespace/newlines follow it,

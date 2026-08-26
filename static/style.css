@@ -474,8 +474,11 @@ body::after {
   font-size: 0.85rem;
   white-space: pre-wrap;
   max-width: 480px;
+  width: 100%;
   min-height: 1.3em;
-  flex-shrink: 0;
+  max-height: 32vh;
+  overflow-y: auto;
+  flex-shrink: 1;
 }
 
 .voice-mute {
