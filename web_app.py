@@ -163,12 +163,20 @@ def logout():
     return redirect(url_for("login"))
 
 
+_DISPLAY_MODEL_BY_PROVIDER = {
+    "ollama": lambda: settings.ollama_model,
+    "groq": lambda: settings.groq_model,
+    "claude": lambda: settings.model,
+}
+
+
 @app.route("/")
 def index():
-    is_ollama = settings.llm_provider.strip().lower() == "ollama"
+    provider = settings.llm_provider.strip().lower()
+    display_model = _DISPLAY_MODEL_BY_PROVIDER.get(provider, lambda: settings.model)()
     return render_template(
         "index.html",
-        model=settings.ollama_model if is_ollama else settings.model,
+        model=display_model,
         rag_ready=retriever.is_ready(),
         auth_enabled=bool(AUTH_USERNAME and AUTH_PASSWORD),
     )

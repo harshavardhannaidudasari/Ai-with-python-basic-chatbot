@@ -27,6 +27,24 @@ def _supports_effort(model: str) -> bool:
     return not any(marker in model for marker in _NO_EFFORT_MODELS)
 
 
+def _groq_reasoning_kwargs(model: str) -> dict:
+    """Suppress visible chain-of-thought on Groq's reasoning-capable models.
+
+    Without this, a reasoning model (e.g. qwen/qwen3.6-27b) streams a raw
+    `<think>...</think>` block as ordinary content: it leaks internal
+    reasoning into the chat UI, and on a bounded max_tokens budget can
+    consume the whole budget before the actual answer is ever generated
+    (observed: image analysis returning nothing but an unfinished chain of
+    thought). The two model families use mutually exclusive parameters for
+    this — see https://console.groq.com/docs/reasoning.
+    """
+    if "qwen" in model:
+        return {"reasoning_format": "hidden"}
+    if "gpt-oss" in model:
+        return {"include_reasoning": False}
+    return {}
+
+
 def _build_system_prompt(context_chunks: list[str] | None) -> str:
     if not context_chunks:
         return settings.system_prompt
@@ -269,6 +287,7 @@ class GroqClient:
                 messages=self._chat_messages(system, messages),
                 max_tokens=settings.max_tokens,
                 stream=True,
+                **_groq_reasoning_kwargs(settings.groq_model),
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
@@ -290,6 +309,7 @@ class GroqClient:
                 messages=self._chat_messages(system, messages),
                 max_tokens=settings.max_tokens,
                 stream=False,
+                **_groq_reasoning_kwargs(settings.groq_model),
             )
         except groq.APIStatusError as exc:
             raise LLMError(f"Groq API error ({exc.status_code}): {exc.message}") from exc
@@ -326,6 +346,7 @@ class GroqClient:
                 messages=messages,
                 max_tokens=settings.max_tokens,
                 stream=True,
+                **_groq_reasoning_kwargs(settings.groq_vision_model),
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
