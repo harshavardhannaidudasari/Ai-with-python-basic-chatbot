@@ -43,6 +43,15 @@ class Settings:
     ollama_vision_model: str = field(
         default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "llava-phi3")
     )
+    groq_api_key: str | None = field(default_factory=lambda: os.getenv("GROQ_API_KEY"))
+    groq_model: str = field(
+        default_factory=lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    )
+    groq_vision_model: str = field(
+        default_factory=lambda: os.getenv(
+            "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+        )
+    )
     # How long Ollama keeps a model resident in memory after a request, so
     # back-to-back messages don't each pay a full reload-from-disk cost.
     ollama_keep_alive: str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m"))

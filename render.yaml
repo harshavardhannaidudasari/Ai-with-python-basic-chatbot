@@ -12,8 +12,8 @@ services:
       - key: FLASK_HOST
         value: 0.0.0.0
       - key: LLM_PROVIDER
-        value: claude
-      - key: ANTHROPIC_API_KEY
+        value: groq
+      - key: GROQ_API_KEY
         sync: false
       - key: AUTH_USERNAME
         sync: false

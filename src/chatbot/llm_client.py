@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import anthropic
+import groq
 import ollama
 
 from .config import settings
@@ -237,11 +238,116 @@ class OllamaClient:
             ) from exc
 
 
-def build_llm_client() -> ClaudeClient | OllamaClient:
-    """Return the configured LLM client (`LLM_PROVIDER=claude|ollama`, default `claude`)."""
+class GroqClient:
+    """Wraps `groq.Groq` (OpenAI-compatible) with the same interface as `ClaudeClient`.
+
+    Free-tier alternative to Claude for deployments where an Anthropic API
+    key isn't an option (e.g. no billing set up).
+    """
+
+    def __init__(self) -> None:
+        try:
+            # Zero-arg client resolves GROQ_API_KEY from the environment.
+            self.client = groq.Groq()
+        except Exception as exc:  # pragma: no cover - defensive
+            raise LLMError(f"Failed to initialize Groq client: {exc}") from exc
+
+    def build_system_prompt(self, context_chunks: list[str] | None) -> str:
+        return _build_system_prompt(context_chunks)
+
+    def _chat_messages(self, system: str, messages: list[dict]) -> list[dict]:
+        return [{"role": "system", "content": system}, *messages]
+
+    def stream_reply(
+        self, messages: list[dict], context_chunks: list[str] | None = None
+    ) -> Iterator[str]:
+        """Yield text chunks as they arrive from the model."""
+        system = self.build_system_prompt(context_chunks)
+        try:
+            stream = self.client.chat.completions.create(
+                model=settings.groq_model,
+                messages=self._chat_messages(system, messages),
+                max_tokens=settings.max_tokens,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+        except groq.APIStatusError as exc:
+            raise LLMError(f"Groq API error ({exc.status_code}): {exc.message}") from exc
+        except groq.APIConnectionError as exc:
+            raise LLMError(f"Network error contacting Groq API: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not get a response from Groq: {exc}") from exc
+
+    def reply(self, messages: list[dict], context_chunks: list[str] | None = None) -> str:
+        """Return the full response text in one call (used by the web API)."""
+        system = self.build_system_prompt(context_chunks)
+        try:
+            completion = self.client.chat.completions.create(
+                model=settings.groq_model,
+                messages=self._chat_messages(system, messages),
+                max_tokens=settings.max_tokens,
+                stream=False,
+            )
+        except groq.APIStatusError as exc:
+            raise LLMError(f"Groq API error ({exc.status_code}): {exc.message}") from exc
+        except groq.APIConnectionError as exc:
+            raise LLMError(f"Network error contacting Groq API: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not get a response from Groq: {exc}") from exc
+        return completion.choices[0].message.content or ""
+
+    def stream_reply_with_image(
+        self, prompt: str, image_b64: str, media_type: str = "image/jpeg"
+    ) -> Iterator[str]:
+        """Yield text chunks describing/answering about a single attached image.
+
+        Single-turn only (no conversation history, no RAG context), matching
+        `ClaudeClient.stream_reply_with_image`'s contract. Uses a separate
+        vision-capable model since not every Groq-hosted model accepts images.
+        """
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt or "Describe this image."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{image_b64}"},
+                    },
+                ],
+            }
+        ]
+        try:
+            stream = self.client.chat.completions.create(
+                model=settings.groq_vision_model,
+                messages=messages,
+                max_tokens=settings.max_tokens,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+        except groq.APIStatusError as exc:
+            raise LLMError(f"Groq API error ({exc.status_code}): {exc.message}") from exc
+        except groq.APIConnectionError as exc:
+            raise LLMError(f"Network error contacting Groq API: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not get a response from Groq: {exc}") from exc
+
+
+def build_llm_client() -> ClaudeClient | OllamaClient | GroqClient:
+    """Return the configured LLM client (`LLM_PROVIDER=claude|ollama|groq`, default `claude`)."""
     provider = settings.llm_provider.strip().lower()
     if provider == "ollama":
         return OllamaClient()
     if provider == "claude":
         return ClaudeClient()
-    raise LLMError(f"Unknown LLM_PROVIDER: {settings.llm_provider!r} (expected 'claude' or 'ollama')")
+    if provider == "groq":
+        return GroqClient()
+    raise LLMError(
+        f"Unknown LLM_PROVIDER: {settings.llm_provider!r} (expected 'claude', 'ollama', or 'groq')"
+    )

@@ -2,16 +2,19 @@
 
 *Intelligence in Motion*
 
-A Python chatbot powered by Anthropic's Claude API (or a local Ollama model),
-with Retrieval-Augmented Generation (RAG) over your own documents. Comes with
-both an interactive terminal client and a Flask-based browser chat UI.
+A Python chatbot powered by Anthropic's Claude API, Groq's free API, or a
+local Ollama model, with Retrieval-Augmented Generation (RAG) over your own
+documents. Comes with both an interactive terminal client and a Flask-based
+browser chat UI.
 
 ## Features
 
 - **Claude-powered chat** — streaming responses via the official `anthropic`
   Python SDK, with configurable model, effort, and system prompt.
+- **Free API option** — swap in [Groq](https://console.groq.com/keys)
+  (no card required) instead of Claude, for deployments without a paid key.
 - **Local model support** — swap in a local [Ollama](https://ollama.com) model
-  (e.g. `llama3.2:1b`) instead of Claude, no API key or network required.
+  (e.g. `llama3.2:1b`) instead, no API key or network required.
 - **Retrieval-Augmented Generation** — index `.txt`, `.md`, and `.pdf` files
   and have the bot ground its answers in them, citing sources.
 - **Local embeddings** — uses `sentence-transformers` for embeddings, so
@@ -76,6 +79,14 @@ Claude's system prompt as grounding context.
 
    Then edit `.env` and set `ANTHROPIC_API_KEY` to your key from
    [console.anthropic.com](https://console.anthropic.com/settings/keys).
+
+   **Or use Groq for free** — no card required. Get a key at
+   [console.groq.com/keys](https://console.groq.com/keys), then:
+
+   ```env
+   LLM_PROVIDER=groq
+   GROQ_API_KEY=gsk_...
+   ```
 
    **Or run fully local with Ollama** — install [Ollama](https://ollama.com),
    pull a small model, and switch the provider:
@@ -149,10 +160,14 @@ no domain required.
 3. When prompted, set these environment variables (marked `sync: false` in
    `render.yaml` so Render asks for them instead of storing them in the
    blueprint):
-   - `ANTHROPIC_API_KEY` — required, from
-     [console.anthropic.com](https://console.anthropic.com/settings/keys)
+   - `GROQ_API_KEY` — required, free (no card), from
+     [console.groq.com/keys](https://console.groq.com/keys)
    - `AUTH_USERNAME` / `AUTH_PASSWORD` — required once the app is public;
      without these the web UI has no login
+
+   The blueprint defaults to `LLM_PROVIDER=groq` so no paid API key is
+   needed. Swap to `LLM_PROVIDER=claude` (and add `ANTHROPIC_API_KEY`
+   instead) in Render's environment settings if you'd rather use Claude.
 4. Deploy. Your stable URL is `https://orbitproai.onrender.com` (or
    `orbitproai-<suffix>.onrender.com` if that name is taken — Render shows
    the final URL after the first deploy).
@@ -169,7 +184,7 @@ Notes:
   repo (see `data/docs/about_this_project.md` for an example) rather than
   uploading them through the UI.
 - `LLM_PROVIDER=ollama` won't work on Render — there's no Ollama server to
-  point at. The blueprint defaults to `LLM_PROVIDER=claude`.
+  point at. The blueprint defaults to `LLM_PROVIDER=groq`.
 
 ## Configuration
 
@@ -177,11 +192,13 @@ All settings live in `.env` (see `.env.example` for the full list):
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `claude` | `claude` (API) or `ollama` (local, no key needed) |
+| `LLM_PROVIDER` | `claude` | `claude` (API), `groq` (free API, no card), or `ollama` (local, no key needed) |
 | `ANTHROPIC_API_KEY` | — | Your Anthropic API key (required when `LLM_PROVIDER=claude`) |
 | `CLAUDE_MODEL` | `claude-opus-5` | Model to use — try `claude-haiku-4-5-20251001` for a faster/cheaper bot |
 | `MAX_TOKENS` | `2048` | Max response length |
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
+| `GROQ_API_KEY` | — | Your Groq API key (required when `LLM_PROVIDER=groq`) — free, from [console.groq.com/keys](https://console.groq.com/keys) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq-hosted model to use when `LLM_PROVIDER=groq` |
 | `OLLAMA_MODEL` | `llama3.2:1b` | Local model to use when `LLM_PROVIDER=ollama` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |

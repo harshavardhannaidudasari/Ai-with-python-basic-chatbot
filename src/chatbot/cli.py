@@ -23,8 +23,11 @@ def _print_banner(rag_enabled: bool, rag_ready: bool) -> None:
     print("=" * 60)
     print(" OrbitProAI  (RAG-enabled)")
     print("=" * 60)
-    if settings.llm_provider.strip().lower() == "ollama":
+    provider = settings.llm_provider.strip().lower()
+    if provider == "ollama":
         print(f" Provider: Ollama ({settings.ollama_host})  |  Model: {settings.ollama_model}")
+    elif provider == "groq":
+        print(f" Provider: Groq  |  Model: {settings.groq_model}")
     else:
         print(f" Provider: Claude  |  Model: {settings.model}")
     rag_status = "on" if rag_enabled else "off"
@@ -35,10 +38,17 @@ def _print_banner(rag_enabled: bool, rag_ready: bool) -> None:
 
 
 def run() -> None:
-    if settings.llm_provider.strip().lower() != "ollama" and not settings.anthropic_api_key:
+    provider = settings.llm_provider.strip().lower()
+    if provider == "claude" and not settings.anthropic_api_key:
         print(
             "[warn] ANTHROPIC_API_KEY is not set. Set it in a .env file or your "
             "environment, or run `ant auth login`.",
+            file=sys.stderr,
+        )
+    elif provider == "groq" and not settings.groq_api_key:
+        print(
+            "[warn] GROQ_API_KEY is not set. Get a free key at "
+            "https://console.groq.com/keys and set it in a .env file or your environment.",
             file=sys.stderr,
         )
 
