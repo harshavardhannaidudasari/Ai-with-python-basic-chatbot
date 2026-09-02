@@ -230,8 +230,16 @@ All settings live in `.env` (see `.env.example` for the full list):
 | `CLAUDE_EFFORT` | `medium` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` |
 | `GROQ_API_KEY` | — | Your Groq API key (required when `LLM_PROVIDER=groq`) — free, from [console.groq.com/keys](https://console.groq.com/keys) |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq-hosted model to use when `LLM_PROVIDER=groq` |
-| `GROQ_TTS_VOICE` | `hannah` | Voice mode's spoken-reply voice (Groq Orpheus TTS) — used whenever `GROQ_API_KEY` is set, regardless of `LLM_PROVIDER`. Female: `hannah`/`autumn`/`diana`. Male: `troy`/`austin`/`daniel` |
-| `VOICE_CLONE_REFERENCE` | — | Path to a reference audio sample to clone for voice mode instead of a Groq preset. Free, local-only — see [Voice cloning](#voice-cloning-optional-free-local) below |
+| `TTS_PROVIDER` | — | Pins which voice-mode TTS engine to try first, overriding the default priority (`clone` > `gemini` > `sarvam` > `kokoro` > `groq`). One of `clone`/`gemini`/`sarvam`/`kokoro`/`groq` |
+| `GEMINI_API_KEY` | — | Your Google AI Studio API key — free, no card, from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Powers voice mode's spoken replies (Gemini TTS) whenever set, regardless of `LLM_PROVIDER`; preferred by default since its free tier is much harder to exhaust than Groq's |
+| `GEMINI_TTS_VOICE` | `Kore` | Voice mode's spoken-reply voice (Gemini TTS). 30 presets — see [ai.google.dev/gemini-api/docs/speech-generation](https://ai.google.dev/gemini-api/docs/speech-generation) |
+| `SARVAM_API_KEY` | — | Your Sarvam AI API key — free credits on signup, no card, from [dashboard.sarvam.ai](https://dashboard.sarvam.ai). Best choice for Indian-language voice replies: native Hindi/Tamil/Telugu/etc. and Hinglish code-switching, unlike Gemini/Groq |
+| `SARVAM_TTS_LANGUAGE` | `en-IN` | BCP-47 language code for Sarvam TTS (`hi-IN`, `ta-IN`, `te-IN`, ...) |
+| `SARVAM_TTS_SPEAKER` | `shubh` | Voice mode's spoken-reply voice (Sarvam TTS) — see [docs.sarvam.ai](https://docs.sarvam.ai) for the full speaker list |
+| `KOKORO_TTS_ENABLED` | `false` | Enables local Kokoro TTS (82M-param, open-weight, free/unlimited) — needs `pip install -r requirements-kokoro.txt` first; not viable on Render's free tier |
+| `KOKORO_TTS_VOICE` | `af_heart` | Voice mode's spoken-reply voice (Kokoro TTS) — see [VOICES.md](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md) for the full list and quality grades |
+| `GROQ_TTS_VOICE` | `hannah` | Voice mode's spoken-reply voice (Groq Orpheus TTS) — used as a fallback when none of the engines above are configured/enabled. Female: `hannah`/`autumn`/`diana`. Male: `troy`/`austin`/`daniel` |
+| `VOICE_CLONE_REFERENCE` | — | Path to a reference audio sample to clone for voice mode instead of a preset. Free, local-only — see [Voice cloning](#voice-cloning-optional-free-local) below |
 | `OLLAMA_MODEL` | `llama3.2:1b` | Local model to use when `LLM_PROVIDER=ollama` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers embedding model |

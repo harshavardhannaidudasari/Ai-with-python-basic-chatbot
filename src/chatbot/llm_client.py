@@ -6,15 +6,22 @@ and the small per-model quirks (e.g. `effort` isn't accepted on Haiku).
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import tempfile
 import threading
 import time
+import wave
 from collections.abc import Iterator
 
 import anthropic
 import groq
 import ollama
+from google import genai
+from google.genai import types as genai_types
+from google.genai import errors as genai_errors
+from sarvamai import SarvamAI
 
 from .config import settings
 
@@ -390,21 +397,105 @@ _tts_client: groq.Groq | None = None
 def synthesize_speech(text: str) -> bytes:
     """Return WAV audio bytes for `text`, spoken by voice mode's chosen voice.
 
-    Tries the local voice clone first (settings.voice_clone_reference) if
-    one is configured, since it's a specific chosen voice rather than a
-    preset; falls back to Groq's Orpheus TTS on any failure (including the
-    clone's heavy ML dependencies simply not being installed — expected on
-    a resource-constrained deploy like Render's free tier, where
-    VOICE_CLONE_REFERENCE is intentionally left unset). If neither is
-    configured/available, the caller (web_app's /api/speak) surfaces the
-    error and the frontend falls back further, to the browser's own voice.
+    Tries each configured/enabled engine in turn — see _TTS_STAGES (bottom
+    of this file, defined after the engine functions it references) for the
+    default order, or settings.tts_provider to pin a specific one first
+    regardless of that order (e.g. "sarvam" for Indian-language replies even
+    with GEMINI_API_KEY also set). Each stage falls through to the next on
+    any failure, including a stage's dependency simply not being installed
+    (e.g. Kokoro enabled but requirements-kokoro.txt not installed) or
+    configured (e.g. GEMINI_API_KEY left unset). If every configured stage
+    fails — or none is configured at all — the caller (web_app's
+    /api/speak) surfaces the error and the frontend falls back further, to
+    the browser's own voice.
     """
-    if settings.voice_clone_reference:
+    stages = list(_TTS_STAGES)
+    if settings.tts_provider:
+        # Stable sort: the pinned provider moves to front, everything else
+        # keeps its default relative order.
+        stages.sort(key=lambda stage: stage[0] != settings.tts_provider)
+
+    last_exc: Exception | None = None
+    for name, flag_attr, fn in stages:
+        if not getattr(settings, flag_attr):
+            continue
         try:
-            return synthesize_speech_clone(text)
+            return fn(text)
         except Exception as exc:
-            print(f"[voice-clone] falling back to Groq TTS: {exc}")
-    return synthesize_speech_groq(text)
+            print(f"[tts:{name}] falling back: {exc}")
+            last_exc = exc
+
+    if last_exc is not None:
+        raise last_exc if isinstance(last_exc, LLMError) else LLMError(str(last_exc))
+    raise LLMError(
+        "No text-to-speech engine is configured — set GEMINI_API_KEY, "
+        "SARVAM_API_KEY, GROQ_API_KEY, KOKORO_TTS_ENABLED=true, or "
+        "VOICE_CLONE_REFERENCE in .env."
+    )
+
+
+_gemini_tts_client: genai.Client | None = None
+
+
+def synthesize_speech_gemini(text: str) -> bytes:
+    """Return WAV audio bytes for `text`, spoken by Gemini's TTS voice.
+
+    Free via a Google AI Studio API key (aistudio.google.com/apikey), and
+    preferred over Groq's Orpheus (see synthesize_speech()) since its free
+    tier is far less likely to be exhausted by normal use. The API itself
+    returns raw 24kHz/16-bit/mono PCM, not a WAV file, so this wraps it in a
+    WAV header before returning — the rest of the app (web_app's
+    /api/speak, the frontend's <audio> playback) expects WAV either way.
+    """
+    global _gemini_tts_client
+    if _gemini_tts_client is None:
+        try:
+            # Zero-arg client resolves GEMINI_API_KEY from the environment.
+            _gemini_tts_client = genai.Client()
+        except Exception as exc:  # pragma: no cover - defensive
+            raise LLMError(f"Failed to initialize Gemini TTS client: {exc}") from exc
+
+    # Mirrors synthesize_speech_groq's retry: a transient rate/server error
+    # plausibly clears within a short backoff; anything else (bad key,
+    # decommissioned model) won't, so only one retry is attempted.
+    for attempt in range(2):
+        try:
+            response = _gemini_tts_client.models.generate_content(
+                model=settings.gemini_tts_model,
+                contents=text,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=genai_types.SpeechConfig(
+                        voice_config=genai_types.VoiceConfig(
+                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                                voice_name=settings.gemini_tts_voice,
+                            )
+                        )
+                    ),
+                ),
+            )
+            break
+        except genai_errors.APIError as exc:
+            retryable = exc.code == 429 or exc.code >= 500
+            if retryable and attempt == 0:
+                time.sleep(0.6)
+                continue
+            raise LLMError(f"Gemini TTS error ({exc.code}): {exc.message}") from exc
+        except Exception as exc:
+            raise LLMError(f"Could not synthesize speech via Gemini: {exc}") from exc
+
+    candidates = response.candidates or []
+    if not candidates or not candidates[0].content.parts:
+        raise LLMError("Gemini TTS returned no audio.")
+    pcm = candidates[0].content.parts[0].inline_data.data
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit samples
+        wf.setframerate(24000)
+        wf.writeframes(pcm)
+    return buffer.getvalue()
 
 
 def synthesize_speech_groq(text: str) -> bytes:
@@ -445,7 +536,15 @@ def synthesize_speech_groq(text: str) -> bytes:
             )
             break
         except groq.APIStatusError as exc:
-            retryable = exc.status_code == 429 or exc.status_code >= 500
+            # A per-minute/request-rate 429, or a transient 5xx, plausibly
+            # clears within the 0.6s backoff below. A per-day quota 429
+            # (e.g. "tokens per day (TPD)") won't — Groq's free tier resets
+            # on the order of minutes to hours, so retrying immediately just
+            # adds a guaranteed-useless 0.6s of latency before falling back
+            # to the browser voice anyway. Skip straight to the fallback in
+            # that case instead of stalling every sentence for nothing.
+            quota_exhausted = "per day" in (exc.message or "").lower()
+            retryable = not quota_exhausted and (exc.status_code == 429 or exc.status_code >= 500)
             if retryable and attempt == 0:
                 time.sleep(0.6)
                 continue
@@ -545,3 +644,119 @@ def synthesize_speech_clone(text: str) -> bytes:
     buffer = io.BytesIO()
     sf.write(buffer, samples, samplerate=24000, format="WAV")
     return buffer.getvalue()
+
+
+_sarvam_client: SarvamAI | None = None
+
+
+def synthesize_speech_sarvam(text: str) -> bytes:
+    """Return WAV audio bytes for `text`, spoken by Sarvam AI's TTS voice.
+
+    Sarvam is an Indian AI platform — free credits on signup, no card
+    required. Its edge over Gemini/Groq isn't English quality, it's native
+    Hindi/Tamil/Telugu/etc. and Hinglish code-switching support, which
+    neither of the others handle natively. Get a key at
+    https://dashboard.sarvam.ai
+    """
+    global _sarvam_client
+    if _sarvam_client is None:
+        try:
+            _sarvam_client = SarvamAI(api_subscription_key=settings.sarvam_api_key)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise LLMError(f"Failed to initialize Sarvam TTS client: {exc}") from exc
+
+    # Mirrors synthesize_speech_groq's retry: a transient rate/server error
+    # plausibly clears within a short backoff; anything else won't.
+    for attempt in range(2):
+        try:
+            response = _sarvam_client.text_to_speech.convert(
+                text=text,
+                language_code=settings.sarvam_tts_language,
+                model=settings.sarvam_tts_model,
+                speaker=settings.sarvam_tts_speaker,
+            )
+            break
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            retryable = status == 429 or (isinstance(status, int) and status >= 500)
+            if retryable and attempt == 0:
+                time.sleep(0.6)
+                continue
+            raise LLMError(f"Could not synthesize speech via Sarvam: {exc}") from exc
+
+    if not response.audios:
+        raise LLMError("Sarvam TTS returned no audio.")
+    # Sarvam's audio chunks are already complete WAV files, base64-encoded —
+    # unlike Gemini's raw PCM, no header wrapping needed.
+    return base64.b64decode("".join(response.audios))
+
+
+_kokoro_pipeline = None
+_kokoro_lock = threading.Lock()
+
+
+def synthesize_speech_kokoro(text: str) -> bytes:
+    """Return WAV audio bytes for `text`, spoken by the local Kokoro-82M model.
+
+    Kokoro is a small (82M parameter), Apache-2.0 open-weight TTS model —
+    free and unlimited since it runs entirely locally: no API, no
+    per-request cost, no daily quota to exhaust like Groq/Gemini/Sarvam's
+    free tiers. The tradeoff is the same shape as voice cloning above: a
+    torch/transformers dependency chain (see requirements-kokoro.txt, not
+    part of the default install) and CPU inference — much lighter than
+    XTTS-v2's ~2GB, but still not viable on Render's free tier.
+    """
+    global _kokoro_pipeline
+    if _kokoro_pipeline is None:
+        try:
+            from kokoro import KPipeline
+        except ImportError as exc:
+            raise LLMError(
+                "Kokoro TTS isn't installed — run "
+                "`pip install -r requirements-kokoro.txt` first."
+            ) from exc
+        try:
+            _kokoro_pipeline = KPipeline(lang_code=settings.kokoro_tts_lang)
+        except Exception as exc:
+            raise LLMError(f"Failed to load the Kokoro TTS model: {exc}") from exc
+
+    try:
+        # Not documented as thread-safe for concurrent calls; this app is
+        # single-user, but the lock keeps back-to-back sentence requests
+        # from racing (mirrors synthesize_speech_clone's _clone_tts_lock).
+        with _kokoro_lock:
+            generator = _kokoro_pipeline(text, voice=settings.kokoro_tts_voice, speed=1)
+            # A short sentence is normally one segment, but the pipeline can
+            # still split a long one internally — concatenate every
+            # segment's audio so nothing gets dropped.
+            segments = [audio for _graphemes, _phonemes, audio in generator]
+    except Exception as exc:
+        raise LLMError(f"Kokoro TTS failed: {exc}") from exc
+
+    if not segments:
+        raise LLMError("Kokoro TTS returned no audio.")
+
+    import numpy as np
+    import soundfile as sf
+
+    samples = segments[0] if len(segments) == 1 else np.concatenate(segments)
+    buffer = io.BytesIO()
+    sf.write(buffer, samples, samplerate=24000, format="WAV")
+    return buffer.getvalue()
+
+
+# Default priority for synthesize_speech() when settings.tts_provider
+# doesn't pin one explicitly: the local clone (a specific chosen voice, when
+# configured) first, then Gemini (currently the best general-purpose free
+# voice — Groq's Orpheus free tier caps out at just 3,600 tokens/day,
+# confirmed exhausted live on 2026-09-02), then Sarvam (best choice
+# specifically for Indian-language replies), then local Kokoro (free/
+# unlimited but needs its own install), then Groq last. Defined here, after
+# the engine functions above, so it can reference them directly.
+_TTS_STAGES: list[tuple[str, str, object]] = [
+    ("clone", "voice_clone_reference", synthesize_speech_clone),
+    ("gemini", "gemini_api_key", synthesize_speech_gemini),
+    ("sarvam", "sarvam_api_key", synthesize_speech_sarvam),
+    ("kokoro", "kokoro_tts_enabled", synthesize_speech_kokoro),
+    ("groq", "groq_api_key", synthesize_speech_groq),
+]

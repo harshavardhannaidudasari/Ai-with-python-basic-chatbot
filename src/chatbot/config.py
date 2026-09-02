@@ -75,6 +75,55 @@ class Settings:
     )
     # Female English voices: hannah, autumn, diana. Male: troy, austin, daniel.
     groq_tts_voice: str = field(default_factory=lambda: os.getenv("GROQ_TTS_VOICE", "hannah"))
+    # Gemini TTS (Google AI Studio) — free API key, no card required, and a
+    # much larger free-tier quota than Groq's Orpheus (whose 3,600
+    # tokens/day cap is easy to exhaust in normal use — confirmed live
+    # 2026-09-02). Preferred over Groq when set; see synthesize_speech().
+    # Get a key at https://aistudio.google.com/apikey
+    gemini_api_key: str | None = field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
+    # Preview model name — Google occasionally renames/retires these (Groq's
+    # TTS default has already been renamed once for the same reason), so
+    # this stays env-overridable rather than hardcoded further down.
+    gemini_tts_model: str = field(
+        default_factory=lambda: os.getenv("GEMINI_TTS_MODEL", "gemini-3.1-flash-tts-preview")
+    )
+    # Full voice list (30 prebuilt voices) and characteristics:
+    # https://ai.google.dev/gemini-api/docs/speech-generation
+    gemini_tts_voice: str = field(default_factory=lambda: os.getenv("GEMINI_TTS_VOICE", "Kore"))
+    # Sarvam AI TTS — an Indian AI platform: free credits on signup, no card
+    # required (https://dashboard.sarvam.ai). Its main advantage over
+    # Gemini/Groq isn't English quality, it's native Hindi/Tamil/Telugu/etc.
+    # and Hinglish code-switching support — neither of the others handle
+    # Indian languages natively. See TTS_PROVIDER below to make this (or any
+    # engine) the preferred one instead of the default priority order.
+    sarvam_api_key: str | None = field(default_factory=lambda: os.getenv("SARVAM_API_KEY"))
+    sarvam_tts_model: str = field(default_factory=lambda: os.getenv("SARVAM_TTS_MODEL", "bulbul:v3"))
+    sarvam_tts_speaker: str = field(default_factory=lambda: os.getenv("SARVAM_TTS_SPEAKER", "shubh"))
+    # BCP-47 code Sarvam expects — en-IN for English, hi-IN for Hindi, etc.
+    # Full list: https://docs.sarvam.ai
+    sarvam_tts_language: str = field(
+        default_factory=lambda: os.getenv("SARVAM_TTS_LANGUAGE", "en-IN")
+    )
+    # Kokoro TTS — a small (82M parameter), Apache-2.0 open-weight model.
+    # Off by default: unlike the API-based engines above, it runs entirely
+    # locally, which means no daily quota to exhaust and zero per-request
+    # cost, but it needs the same kind of heavy torch/transformers install
+    # as voice cloning below (see requirements-kokoro.txt, not part of the
+    # default install) — flip this on once that's installed.
+    kokoro_tts_enabled: bool = field(default_factory=lambda: _env_bool("KOKORO_TTS_ENABLED", False))
+    # Voice list & per-voice quality grades:
+    # https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+    # af_heart is the top-graded (A) English voice.
+    kokoro_tts_voice: str = field(default_factory=lambda: os.getenv("KOKORO_TTS_VOICE", "af_heart"))
+    # Must match the chosen voice's prefix: 'a' = American English (af_/am_
+    # voices), 'b' = British English (bf_/bm_). Passed to KPipeline.
+    kokoro_tts_lang: str = field(default_factory=lambda: os.getenv("KOKORO_TTS_LANG", "a"))
+    # Explicit override for which TTS engine to try first when more than one
+    # is configured/enabled — e.g. set to "sarvam" to prefer it for Indian-
+    # language replies even though GEMINI_API_KEY is also set. One of:
+    # clone, gemini, sarvam, kokoro, groq. Leave unset for the default
+    # priority order (see synthesize_speech() in llm_client.py).
+    tts_provider: str = field(default_factory=lambda: os.getenv("TTS_PROVIDER", ""))
     # Optional local voice cloning (Coqui XTTS-v2) — when set, voice mode
     # speaks in this specific cloned voice instead of a Groq preset. Path to
     # a short (6s+) reference audio sample. Free (no API), but only works on

@@ -1,0 +1,24 @@
+# Optional, local-only: install this to enable Kokoro TTS (KOKORO_TTS_ENABLED
+# in .env) for voice mode's spoken replies. Free and unlimited — no API key,
+# no daily quota, runs entirely on your machine — but it needs the same kind
+# of heavy torch/transformers dependency chain as voice cloning
+# (requirements-voice-clone.txt), just with a much smaller (82M parameter,
+# ~330MB) model than XTTS-v2's ~1.9GB. Not installed as part of the default
+# requirements.txt since it isn't viable on Render's free tier (or any
+# low-memory host) — leave KOKORO_TTS_ENABLED unset there and the app uses
+# Gemini/Sarvam/Groq TTS instead.
+#
+# Needs Python <3.13: kokoro's PyPI metadata pins numpy===1.26.4 exactly and
+# pulls in misaki[en] -> spacy -> thinc -> blis, none of which currently
+# publish prebuilt wheels for 3.13/3.14 — confirmed failing live on 3.14.7
+# (blis fails to compile from source via Cython). Use a 3.10-3.12
+# virtualenv for this if your main environment is newer.
+#
+#   pip install -r requirements-kokoro.txt
+#
+# On Windows, also install espeak-ng (used as a phonemizer fallback for
+# out-of-dictionary words): download the .msi from
+# https://github.com/espeak-ng/espeak-ng/releases
+# On Linux: apt-get install espeak-ng
+kokoro==0.7.16
+soundfile>=0.12.1
