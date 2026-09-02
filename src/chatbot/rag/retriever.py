@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from ..config import settings
@@ -21,6 +22,15 @@ class Retriever:
         self.docs_dir = docs_dir or settings.docs_dir
         self.index_dir = index_dir or settings.index_dir
         self._embedder: Embedder | None = None
+        # Guards the lazy-load below — without it, the background warm-up
+        # thread (web_app's _warm_up) and a user's first request racing to
+        # load the embedder at the same moment could both see `None` and
+        # each construct their own full Embedder concurrently. Confirmed
+        # live that the cold load alone takes ~35s and pulls in
+        # sentence-transformers/torch, so doubling that mid-load on a
+        # memory-constrained host (e.g. Render's free tier) is worth
+        # avoiding rather than risking.
+        self._embedder_lock = threading.Lock()
         self._embedding_model_name = embedding_model or settings.embedding_model
         self.store = VectorStore(self.index_dir)
 
@@ -29,7 +39,9 @@ class Retriever:
         # Lazily loaded: importing sentence-transformers is slow, and a plain
         # chat session (RAG disabled) shouldn't pay that cost.
         if self._embedder is None:
-            self._embedder = Embedder(self._embedding_model_name)
+            with self._embedder_lock:
+                if self._embedder is None:  # re-check: lost the race while waiting for the lock
+                    self._embedder = Embedder(self._embedding_model_name)
         return self._embedder
 
     def ingest(self) -> int:

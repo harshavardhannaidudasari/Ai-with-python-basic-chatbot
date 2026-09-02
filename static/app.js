@@ -430,17 +430,46 @@ function addSystemMessage(text) {
   scrollToBottom();
 }
 
+// A slow host (Render's free tier spinning up from idle, or the embedder's
+// very first load pulling in torch/sentence-transformers) can take long
+// enough that the proxy cuts the connection before any response body is
+// written — response.json() on that empty body throws a bare "Unexpected
+// end of JSON input" with no hint of what actually happened. Confirmed
+// live: exactly this, uploading the first document right after a fresh
+// deploy. This gives a clearer, actionable message instead.
+async function parseJsonResponse(response) {
+  const raw = await response.text();
+  if (!raw) {
+    throw new Error(
+      response.ok
+        ? "The server closed the connection before responding — it may still be starting up. Try again in a moment."
+        : `Request failed (${response.status}) with no response body — the server may have crashed or timed out.`
+    );
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`Server returned an unexpected response (${response.status}): ${raw.slice(0, 200)}`);
+  }
+}
+
 ingestBtn.addEventListener("click", async () => {
   ingestBtn.disabled = true;
   ingestBtn.textContent = "Indexing…";
   try {
     const response = await fetch("/api/ingest", { method: "POST" });
-    const data = await response.json();
-    addSystemMessage(
-      data.chunks_indexed
-        ? `Indexed ${data.chunks_indexed} chunks from data/docs/.`
-        : "No documents found in data/docs/."
-    );
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      addSystemMessage(`Error: ${data.error || "reindex failed"}`);
+    } else {
+      addSystemMessage(
+        data.chunks_indexed
+          ? `Indexed ${data.chunks_indexed} chunks from data/docs/.`
+          : "No documents found in data/docs/."
+      );
+    }
+  } catch (err) {
+    addSystemMessage(`Network error: ${err.message}`);
   } finally {
     ingestBtn.disabled = false;
     ingestBtn.textContent = "Reindex docs";
@@ -457,7 +486,7 @@ docInput.addEventListener("change", async () => {
   addSystemMessage(`Uploading ${file.name}...`);
   try {
     const response = await fetch("/api/upload_doc", { method: "POST", body: formData });
-    const data = await response.json();
+    const data = await parseJsonResponse(response);
     if (!response.ok) {
       addSystemMessage(`Error: ${data.error || "upload failed"}`);
     } else if (data.warning) {

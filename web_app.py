@@ -68,10 +68,18 @@ def _warm_up() -> None:
     model is warmed, not vision — on 8GB RAM the two don't comfortably stay
     loaded at once, so warming both would just make one evict the other
     before it's ever used.
+
+    The embedder warms unconditionally — not just `if retriever.is_ready()`
+    (an existing index to query) — because loading sentence-transformers is
+    also needed for the *first* document a fresh deploy ever ingests, and
+    that's exactly the request that used to pay the full cold-load cost
+    live: confirmed on Render's free tier, uploading the very first document
+    after a deploy timed out with "Unexpected end of JSON input" (the proxy
+    cutting off a request that took too long importing torch/
+    sentence-transformers and downloading model weights on first use).
     """
     try:
-        if retriever.is_ready():
-            retriever.embedder  # noqa: B018 - property access triggers the lazy load
+        retriever.embedder  # noqa: B018 - property access triggers the lazy load
     except Exception as exc:
         print(f"[warn] embedder warm-up failed: {exc}", file=sys.stderr)
 
