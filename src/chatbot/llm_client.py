@@ -394,33 +394,38 @@ def build_llm_client() -> ClaudeClient | OllamaClient | GroqClient:
 _tts_client: groq.Groq | None = None
 
 
-def synthesize_speech(text: str) -> bytes:
+def synthesize_speech(text: str, provider: str | None = None, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken by voice mode's chosen voice.
 
     Tries each configured/enabled engine in turn — see _TTS_STAGES (bottom
     of this file, defined after the engine functions it references) for the
-    default order, or settings.tts_provider to pin a specific one first
-    regardless of that order (e.g. "sarvam" for Indian-language replies even
-    with GEMINI_API_KEY also set). Each stage falls through to the next on
-    any failure, including a stage's dependency simply not being installed
-    (e.g. Kokoro enabled but requirements-kokoro.txt not installed) or
-    configured (e.g. GEMINI_API_KEY left unset). If every configured stage
-    fails — or none is configured at all — the caller (web_app's
-    /api/speak) surfaces the error and the frontend falls back further, to
-    the browser's own voice.
+    default order, or `provider` (from the frontend's voice picker; falls
+    back to settings.tts_provider when not given a per-request one) to pin a
+    specific one first regardless of that order. `voice` overrides that
+    engine's configured voice/speaker for this call only — never applied
+    when falling through to a *different* engine, since a voice name from
+    one provider is meaningless to another (e.g. Gemini's "Kore" isn't a
+    valid Sarvam speaker). Each stage falls through to the next on any
+    failure, including a stage's dependency simply not being installed (e.g.
+    Kokoro enabled but requirements-kokoro.txt not installed) or configured
+    (e.g. GEMINI_API_KEY left unset). If every configured stage fails — or
+    none is configured at all — the caller (web_app's /api/speak) surfaces
+    the error and the frontend falls back further, to the browser's own
+    voice.
     """
     stages = list(_TTS_STAGES)
-    if settings.tts_provider:
+    pinned = provider or settings.tts_provider
+    if pinned:
         # Stable sort: the pinned provider moves to front, everything else
         # keeps its default relative order.
-        stages.sort(key=lambda stage: stage[0] != settings.tts_provider)
+        stages.sort(key=lambda stage: stage[0] != pinned)
 
     last_exc: Exception | None = None
     for name, flag_attr, fn in stages:
         if not getattr(settings, flag_attr):
             continue
         try:
-            return fn(text)
+            return fn(text, voice if name == provider else None)
         except Exception as exc:
             print(f"[tts:{name}] falling back: {exc}")
             last_exc = exc
@@ -437,7 +442,7 @@ def synthesize_speech(text: str) -> bytes:
 _gemini_tts_client: genai.Client | None = None
 
 
-def synthesize_speech_gemini(text: str) -> bytes:
+def synthesize_speech_gemini(text: str, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken by Gemini's TTS voice.
 
     Free via a Google AI Studio API key (aistudio.google.com/apikey), and
@@ -446,6 +451,8 @@ def synthesize_speech_gemini(text: str) -> bytes:
     returns raw 24kHz/16-bit/mono PCM, not a WAV file, so this wraps it in a
     WAV header before returning — the rest of the app (web_app's
     /api/speak, the frontend's <audio> playback) expects WAV either way.
+    `voice` overrides settings.gemini_tts_voice for this call only (the
+    frontend's voice picker).
     """
     global _gemini_tts_client
     if _gemini_tts_client is None:
@@ -468,7 +475,7 @@ def synthesize_speech_gemini(text: str) -> bytes:
                     speech_config=genai_types.SpeechConfig(
                         voice_config=genai_types.VoiceConfig(
                             prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                                voice_name=settings.gemini_tts_voice,
+                                voice_name=voice or settings.gemini_tts_voice,
                             )
                         )
                     ),
@@ -498,13 +505,15 @@ def synthesize_speech_gemini(text: str) -> bytes:
     return buffer.getvalue()
 
 
-def synthesize_speech_groq(text: str) -> bytes:
+def synthesize_speech_groq(text: str, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken by Groq's Orpheus TTS voice.
 
     Independent of LLM_PROVIDER: voice mode's spoken replies use this
     whenever GROQ_API_KEY is set, even when chat itself is served by Claude
     or Ollama, since Orpheus is a real, natural-sounding voice — unlike any
     browser's built-in TTS, which is what this falls back to on failure.
+    `voice` overrides settings.groq_tts_voice for this call only (the
+    frontend's voice picker).
     """
     global _tts_client
     if _tts_client is None:
@@ -526,7 +535,7 @@ def synthesize_speech_groq(text: str) -> bytes:
         try:
             response = _tts_client.audio.speech.create(
                 model=settings.groq_tts_model,
-                voice=settings.groq_tts_voice,
+                voice=voice or settings.groq_tts_voice,
                 input=text,
                 # Orpheus only accepts "wav" — other Groq TTS models accept
                 # more formats (flac/mp3/mulaw/ogg/wav), but this app is
@@ -573,7 +582,7 @@ _clone_tts_client = None
 _clone_tts_lock = threading.Lock()
 
 
-def synthesize_speech_clone(text: str) -> bytes:
+def synthesize_speech_clone(text: str, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken in a cloned reference voice.
 
     Zero-shot voice cloning via Coqui XTTS-v2, running entirely locally from
@@ -584,6 +593,9 @@ def synthesize_speech_clone(text: str) -> bytes:
     requirements-voice-clone.txt, not part of the default install), and
     CPU inference that takes several seconds per sentence rather than
     Groq's near-instant API response. Not viable on Render's free tier.
+    `voice` is accepted only for a uniform signature with the other engines
+    (see synthesize_speech) — there's exactly one cloned voice, so it's
+    ignored here.
     """
     global _clone_tts_client
     if _clone_tts_client is None:
@@ -649,7 +661,7 @@ def synthesize_speech_clone(text: str) -> bytes:
 _sarvam_client: SarvamAI | None = None
 
 
-def synthesize_speech_sarvam(text: str) -> bytes:
+def synthesize_speech_sarvam(text: str, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken by Sarvam AI's TTS voice.
 
     Sarvam is an Indian AI platform — free credits on signup, no card
@@ -657,6 +669,8 @@ def synthesize_speech_sarvam(text: str) -> bytes:
     Hindi/Tamil/Telugu/etc. and Hinglish code-switching support, which
     neither of the others handle natively. Get a key at
     https://dashboard.sarvam.ai
+    `voice` overrides settings.sarvam_tts_speaker for this call only (the
+    frontend's voice picker).
     """
     global _sarvam_client
     if _sarvam_client is None:
@@ -673,7 +687,7 @@ def synthesize_speech_sarvam(text: str) -> bytes:
                 text=text,
                 language_code=settings.sarvam_tts_language,
                 model=settings.sarvam_tts_model,
-                speaker=settings.sarvam_tts_speaker,
+                speaker=voice or settings.sarvam_tts_speaker,
             )
             break
         except Exception as exc:
@@ -695,7 +709,7 @@ _kokoro_pipeline = None
 _kokoro_lock = threading.Lock()
 
 
-def synthesize_speech_kokoro(text: str) -> bytes:
+def synthesize_speech_kokoro(text: str, voice: str | None = None) -> bytes:
     """Return WAV audio bytes for `text`, spoken by the local Kokoro-82M model.
 
     Kokoro is a small (82M parameter), Apache-2.0 open-weight TTS model —
@@ -705,6 +719,8 @@ def synthesize_speech_kokoro(text: str) -> bytes:
     torch/transformers dependency chain (see requirements-kokoro.txt, not
     part of the default install) and CPU inference — much lighter than
     XTTS-v2's ~2GB, but still not viable on Render's free tier.
+    `voice` overrides settings.kokoro_tts_voice for this call only (the
+    frontend's voice picker).
     """
     global _kokoro_pipeline
     if _kokoro_pipeline is None:
@@ -725,7 +741,7 @@ def synthesize_speech_kokoro(text: str) -> bytes:
         # single-user, but the lock keeps back-to-back sentence requests
         # from racing (mirrors synthesize_speech_clone's _clone_tts_lock).
         with _kokoro_lock:
-            generator = _kokoro_pipeline(text, voice=settings.kokoro_tts_voice, speed=1)
+            generator = _kokoro_pipeline(text, voice=voice or settings.kokoro_tts_voice, speed=1)
             # A short sentence is normally one segment, but the pipeline can
             # still split a long one internally — concatenate every
             # segment's audio so nothing gets dropped.

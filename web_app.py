@@ -311,9 +311,18 @@ def speak():
     # Called once per sentence, so real requests are always short — this
     # just bounds worst-case cost/latency against a malformed/abusive one.
     text = text[:2000]
+    # From the frontend's voice picker (voice-select in the voice panel) —
+    # both optional, and only meaningful together: `provider` pins which
+    # engine to try first, `voice` overrides that engine's own configured
+    # voice/speaker for this call. An unrecognized/stale provider value
+    # (e.g. a saved choice for an engine no longer configured) just falls
+    # through the normal priority order in synthesize_speech(), no
+    # validation needed here beyond bounding the length.
+    provider = (data.get("provider") or "").strip()[:32] or None
+    voice = (data.get("voice") or "").strip()[:64] or None
 
     try:
-        audio_bytes = synthesize_speech(text)
+        audio_bytes = synthesize_speech(text, provider=provider, voice=voice)
     except LLMError as exc:
         return jsonify({"error": str(exc)}), 503
     return Response(audio_bytes, mimetype="audio/wav")

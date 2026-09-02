@@ -25,6 +25,7 @@ const voiceMuteBtn = document.getElementById("voice-mute-btn");
 const voiceStopBtn = document.getElementById("voice-stop-btn");
 const voiceReplayBtn = document.getElementById("voice-replay-btn");
 const voiceMicBtn = document.getElementById("voice-mic-btn");
+const voiceSelect = document.getElementById("voice-select");
 
 let pendingImage = null; // data URL of the currently attached image, if any
 let turns = []; // ordered list of {userText, image, userWrapper, botWrapper, botBubble, botText, sources, sourceMode}
@@ -731,6 +732,93 @@ voiceMuteBtn.addEventListener("click", () => {
   if (ttsMuted) stopSpeaking();
 });
 
+// Every voice each configured TTS engine offers, so the user can pick one
+// instead of being stuck with whatever GEMINI_TTS_VOICE/etc. is set in
+// .env. Sent to /api/speak as {provider, voice} — see synthesize_speech()
+// in llm_client.py, which only applies the override to the engine it was
+// chosen for; if that engine fails and a different one takes over, the
+// fallback engine uses its own default voice rather than a nonsense
+// cross-provider name.
+const VOICE_OPTIONS = {
+  gemini: [
+    ["Zephyr", "Zephyr — Bright"], ["Puck", "Puck — Upbeat"], ["Leda", "Leda — Youthful"],
+    ["Aoede", "Aoede — Breezy"], ["Autonoe", "Autonoe — Bright"], ["Laomedeia", "Laomedeia — Upbeat"],
+    ["Kore", "Kore — Firm"], ["Charon", "Charon — Informative"], ["Orus", "Orus — Firm"],
+    ["Rasalgethi", "Rasalgethi — Informative"], ["Alnilam", "Alnilam — Firm"],
+    ["Algieba", "Algieba — Smooth"], ["Despina", "Despina — Smooth"],
+    ["Callirrhoe", "Callirrhoe — Easy-going"], ["Umbriel", "Umbriel — Easy-going"],
+    ["Fenrir", "Fenrir — Excitable"], ["Enceladus", "Enceladus — Breathy"],
+    ["Iapetus", "Iapetus — Clear"], ["Erinome", "Erinome — Clear"],
+    ["Algenib", "Algenib — Gravelly"], ["Achernar", "Achernar — Soft"],
+    ["Schedar", "Schedar — Even"], ["Gacrux", "Gacrux — Mature"],
+    ["Pulcherrima", "Pulcherrima — Forward"], ["Achird", "Achird — Friendly"],
+    ["Zubenelgenubi", "Zubenelgenubi — Casual"], ["Vindemiatrix", "Vindemiatrix — Gentle"],
+    ["Sadachbia", "Sadachbia — Lively"], ["Sadaltager", "Sadaltager — Knowledgeable"],
+    ["Sulafat", "Sulafat — Warm"],
+  ],
+  sarvam: [
+    "anushka", "abhilash", "manisha", "vidya", "arya", "karun", "hitesh", "aditya", "ritu",
+    "priya", "neha", "rahul", "pooja", "rohan", "simran", "kavya", "amit", "dev", "ishita",
+    "shreya", "ratan", "varun", "manan", "sumit", "roopa", "kabir", "aayan", "shubh",
+    "ashutosh", "advait", "anand", "tanya", "tarun", "sunny", "mani", "gokul", "vijay",
+    "shruti", "suhani", "mohit", "kavitha", "rehan", "soham", "rupali",
+  ].map((name) => [name, name[0].toUpperCase() + name.slice(1)]),
+  groq: [
+    ["hannah", "Hannah (female)"], ["autumn", "Autumn (female)"], ["diana", "Diana (female)"],
+    ["troy", "Troy (male)"], ["austin", "Austin (male)"], ["daniel", "Daniel (male)"],
+  ],
+};
+const PROVIDER_LABELS = { gemini: "Gemini", sarvam: "Sarvam AI", groq: "Groq" };
+const DEFAULT_VOICE = "gemini:Kore";
+
+function populateVoiceSelect() {
+  for (const [provider, voices] of Object.entries(VOICE_OPTIONS)) {
+    const group = document.createElement("optgroup");
+    group.label = PROVIDER_LABELS[provider];
+    for (const [value, label] of voices) {
+      const opt = document.createElement("option");
+      opt.value = `${provider}:${value}`;
+      opt.textContent = label;
+      group.appendChild(opt);
+    }
+    voiceSelect.appendChild(group);
+  }
+}
+
+function loadSelectedVoice() {
+  try {
+    return localStorage.getItem("voiceMode.selectedVoice") || DEFAULT_VOICE;
+  } catch {
+    return DEFAULT_VOICE;
+  }
+}
+function saveSelectedVoice(value) {
+  try {
+    localStorage.setItem("voiceMode.selectedVoice", value);
+  } catch {
+    // Private-browsing/storage-disabled — the picker still works for this
+    // session, it just won't remember the choice next visit.
+  }
+}
+// {provider, voice} for the currently-selected option, to send with each
+// /api/speak request.
+function selectedVoiceParts() {
+  const value = voiceSelect.value || DEFAULT_VOICE;
+  const sep = value.indexOf(":");
+  return { provider: value.slice(0, sep), voice: value.slice(sep + 1) };
+}
+
+populateVoiceSelect();
+const savedVoice = loadSelectedVoice();
+voiceSelect.value = savedVoice;
+if (voiceSelect.value !== savedVoice) {
+  // The saved choice no longer matches any option (e.g. this list changed
+  // since it was saved) — the assignment above silently fell back to the
+  // first option; persist that instead of leaving stale storage behind.
+  saveSelectedVoice(voiceSelect.value);
+}
+voiceSelect.addEventListener("change", () => saveSelectedVoice(voiceSelect.value));
+
 // Chrome bug: calling speechSynthesis.cancel() (done below, at the start of
 // every voice turn, to stop the previous reply's speech) can leave the
 // engine stuck in a "paused" state where speak() silently queues audio that
@@ -897,18 +985,56 @@ voiceStopBtn.addEventListener("click", () => {
 // or reciting a URL. Text mode still shows the raw markdown; this only
 // touches what gets spoken.
 const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu;
+
+const SMALL_NUMBER_WORDS = [
+  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+  "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+  "seventeen", "eighteen", "nineteen",
+];
+const TENS_WORDS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+function twoDigitWords(n) {
+  if (n < 20) return SMALL_NUMBER_WORDS[n];
+  const tens = Math.floor(n / 10);
+  const ones = n % 10;
+  return ones === 0 ? TENS_WORDS[tens] : `${TENS_WORDS[tens]}-${SMALL_NUMBER_WORDS[ones]}`;
+}
+// Reads a bare 4-digit year the way a person would ("twenty seventeen",
+// "nineteen oh five", "two thousand"), not digit-by-digit ("two zero one
+// seven") — confirmed live: every TTS engine here reads a plain "2017" as
+// individual digits, which is the single biggest thing making replies with
+// dates sound robotic. Not a general number-to-words converter — deliberately
+// scoped to years, the one case voice replies hit constantly.
+function yearToWords(y) {
+  if (y % 1000 === 0) return `${SMALL_NUMBER_WORDS[y / 1000]} thousand`;
+  const first = Math.floor(y / 100);
+  const last = y % 100;
+  if (last === 0) return `${twoDigitWords(first)} hundred`;
+  if (last < 10) return `${twoDigitWords(first)} oh ${SMALL_NUMBER_WORDS[last]}`;
+  return `${twoDigitWords(first)} ${twoDigitWords(last)}`;
+}
+// Matches a bare 4-digit number in a plausible calendar-year range
+// (1000-2999), not preceded/followed by another digit or a decimal point
+// (so "12000" or "3.2017" are left alone) and not preceded by a currency
+// symbol (so "$2017" — a price, not a year — is left alone too).
+const YEAR_PATTERN = /(?<![$€£₹\d.])\b(1\d{3}|2\d{3})\b(?!\.\d)/g;
+function spokenYears(text) {
+  return text.replace(YEAR_PATTERN, (match) => yearToWords(Number(match)));
+}
+
 function sanitizeForSpeech(text) {
-  return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(EMOJI_PATTERN, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return spokenYears(
+    text
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(EMOJI_PATTERN, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 function playServerAudio(blob, generation) {
@@ -944,10 +1070,11 @@ function playServerAudio(blob, generation) {
 function speakServerSide(text, generation) {
   const controller = new AbortController();
   activeSpeakControllers.add(controller);
+  const { provider, voice } = selectedVoiceParts();
   return fetch("/api/speak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, provider, voice }),
     signal: controller.signal,
   })
     .then((response) => {
@@ -1012,11 +1139,26 @@ function speakSentenceEntries(entries, generation) {
     const token = Symbol("speech");
     pendingSpeechTokens.add(token);
     updateStopButtonVisibility();
+    // A Stop press pauses *playback*, not synthesis — a sentence that had
+    // already finished downloading before Stop was pressed still has its
+    // audio sitting right here, so Resume can play it back instantly
+    // instead of re-fetching it from the TTS API. Confirmed live: without
+    // this, "Resume" re-synthesized every unplayed sentence from scratch —
+    // a full network round trip per sentence — which is exactly the "huge
+    // time" delay reported. Only re-fetch when there's nothing cached yet
+    // (the sentence was still mid-fetch when Stop hit, so nothing to
+    // reuse, or it's a sentence streamed in after Stop that was never
+    // attempted at all).
+    const synthesis = entry.blob
+      ? Promise.resolve({ blob: entry.blob })
+      : speakServerSide(entry.text, generation).then((result) => {
+          if (result.blob) entry.blob = result.blob;
+          return result;
+        });
     // Synthesis starts immediately (in parallel with whatever's currently
     // playing); only the actual playback is serialized through the queue,
     // so audio keeps pace with the streaming text instead of the delay of
     // each sentence's synthesis stacking on top of the previous one's.
-    const synthesis = speakServerSide(entry.text, generation);
     playbackQueue = playbackQueue
       .then(() => synthesis)
       .then((result) => playSynthesized(result, entry.text, generation))
@@ -1045,7 +1187,7 @@ function speakSentenceEntries(entries, generation) {
 function enqueueSpeech(text) {
   const spoken = sanitizeForSpeech(text);
   if (!spoken) return;
-  const entry = { text: spoken, played: false };
+  const entry = { text: spoken, played: false, blob: null };
   speechSentences.push(entry);
   if (voiceSpeechPaused) {
     // Nothing is (or will be) playing for it yet — reflect that immediately.
@@ -1162,7 +1304,7 @@ voiceReplayBtn.addEventListener("click", () => {
     // Defensive fallback — shouldn't normally happen, since enqueueSpeech
     // always records into speechSentences as the reply is spoken.
     speechSentences = splitIntoSentences(lastSpokenText)
-      .map((text) => ({ text: sanitizeForSpeech(text), played: false }))
+      .map((text) => ({ text: sanitizeForSpeech(text), played: false, blob: null }))
       .filter((s) => s.text);
   }
   if (speechSentences.length === 0) return;

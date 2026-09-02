@@ -481,6 +481,29 @@ body::after {
   flex-shrink: 1;
 }
 
+.voice-select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  max-width: 280px;
+  width: 100%;
+  margin: 0 0 14px;
+  flex-shrink: 0;
+}
+
+.voice-select:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.voice-select option {
+  background: var(--panel-solid);
+  color: var(--text);
+}
+
 .voice-mute {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border);
