@@ -516,6 +516,22 @@ body::after {
   background: rgba(255, 106, 43, 0.22);
 }
 
+.voice-replay {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.voice-replay:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .chat-area:not([hidden]) {
   display: flex;
   flex-direction: column;
@@ -993,7 +1009,8 @@ code {
     height: 40px;
   }
 
-  .voice-stop {
+  .voice-stop,
+  .voice-replay {
     height: 36px;
     padding: 0 13px;
     font-size: 0.8rem;
